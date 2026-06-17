@@ -1,4 +1,0 @@
-interface:
-  display_name: "Review Gate"
-  short_description: "结构化二次审查 gate"
-  default_prompt: "Use $review-gate 对当前实现做一次发版前二次审查。"

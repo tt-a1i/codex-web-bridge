@@ -1,0 +1,4 @@
+interface:
+  display_name: "Codex Web Bridge"
+  short_description: "连接网页端强模型"
+  default_prompt: "Use $codex-web-bridge 把当前任务上下文发给 ChatGPT Pro，并把回复带回 Codex。"

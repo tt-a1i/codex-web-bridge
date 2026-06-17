@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Scan a review-gate context packet for transmission risks."""
+"""Scan a codex-web-bridge packet for transmission risks."""
 
 from __future__ import annotations
 

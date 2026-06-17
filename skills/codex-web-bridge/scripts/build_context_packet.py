@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Build a bounded Markdown context packet for review-gate."""
+"""Build a bounded Markdown context packet for codex-web-bridge."""
 
 from __future__ import annotations
 
@@ -11,11 +11,21 @@ import sys
 from typing import Iterable
 
 
-REVIEW_MODES = {
-    "plan-hardening",
-    "implementation-review",
-    "pr-comment-resolution",
-    "eval-methodology",
+BRIDGE_PURPOSES = {
+    "planning",
+    "review",
+    "debugging",
+    "architecture",
+    "implementation",
+    "research",
+    "custom",
+}
+
+LEGACY_PURPOSES = {
+    "plan-hardening": "planning",
+    "implementation-review": "review",
+    "pr-comment-resolution": "review",
+    "eval-methodology": "review",
 }
 
 TEXT_SUFFIXES = {
@@ -167,19 +177,24 @@ def build_packet(args: argparse.Namespace) -> str:
     now = dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds")
     base = args.base or (guess_base(repo) if is_git else "")
     repo_label = str(repo) if args.include_repo_path else repo.name
+    purpose_arg = args.purpose or args.mode or "custom"
+    purpose = LEGACY_PURPOSES.get(purpose_arg, purpose_arg)
+    question = args.question or args.decision
 
     sections: list[str] = [
-        "# Review Gate Context Packet",
+        "# Codex Web Bridge Packet",
         "",
-        "## Review Contract",
+        "## Bridge Request",
         "",
-        f"- Mode: `{args.mode}`",
-        f"- Decision: {args.decision}",
+        f"- Provider: `{args.provider}`",
+        f"- Purpose: `{purpose}`",
+        f"- Question: {question}",
         f"- Repo: `{repo_label}`",
         f"- Generated: `{now}`",
         f"- Base: `{base or '[not detected]'}`",
         f"- Scope: {args.scope or '[fill in before sending]'}",
         f"- Out of scope: {args.out_of_scope or '[fill in before sending]'}",
+        f"- Desired response: {args.desired_response or '[answer the question directly and call out uncertainty]'}",
         "",
         "## Local State",
         "",
@@ -268,7 +283,7 @@ def build_packet(args: argparse.Namespace) -> str:
             "",
             args.verification or "[fill in commands and outcomes before sending]",
             "",
-            "## Known Failures / Open Questions",
+            "## Known Failures / Extra Context",
             "",
             args.open_questions or "[fill in before sending]",
             "",
@@ -276,7 +291,7 @@ def build_packet(args: argparse.Namespace) -> str:
             "",
             "- Run `scrub_context.py` before sending externally.",
             "- Remove unrelated private data, secrets, customer data, and local-only machine details.",
-            "- State what was redacted or summarized in the final reviewer prompt.",
+            "- The target web model should answer; Codex will only transport and return the response unless the user asks Codex to continue.",
             "",
         ]
     )
@@ -286,11 +301,19 @@ def build_packet(args: argparse.Namespace) -> str:
 def parse_args(argv: list[str]) -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo", default=".", help="Repository path to inspect.")
-    parser.add_argument("--mode", required=True, choices=sorted(REVIEW_MODES))
-    parser.add_argument("--decision", required=True, help="Exact decision being gated.")
+    parser.add_argument("--provider", default="chatgpt", help="Target provider label, such as chatgpt, claude, grok, gemini, or other.")
+    parser.add_argument("--purpose", choices=sorted(BRIDGE_PURPOSES), help="Why this packet is being sent.")
+    parser.add_argument("--question", default="", help="Exact question for the target web model.")
+    parser.add_argument(
+        "--mode",
+        choices=sorted(BRIDGE_PURPOSES | set(LEGACY_PURPOSES)),
+        help="Deprecated alias for --purpose. Legacy review-gate modes are mapped to bridge purposes.",
+    )
+    parser.add_argument("--decision", default="", help="Deprecated alias for --question.")
     parser.add_argument("--base", default="", help="Base branch/ref. Auto-detected when omitted.")
-    parser.add_argument("--scope", default="", help="In-scope work for this review.")
+    parser.add_argument("--scope", default="", help="In-scope context for this bridge request.")
     parser.add_argument("--out-of-scope", default="", help="Explicitly excluded areas.")
+    parser.add_argument("--desired-response", default="", help="Requested answer format or level of detail.")
     parser.add_argument(
         "--evidence-file",
         action="append",
@@ -313,6 +336,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
 
 def main(argv: list[str]) -> int:
     args = parse_args(argv)
+    if not (args.question or args.decision):
+        raise SystemExit("error: --question is required")
     packet = build_packet(args)
     if args.output:
         output = Path(args.output).expanduser()

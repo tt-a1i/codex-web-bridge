@@ -1,6 +1,6 @@
 # 贡献指南
 
-这个仓库的发布物是 `skills/review-gate`。skill 目录内只放 Codex 执行任务需要的内容；仓库级维护说明放在根目录。
+这个仓库的发布物是 `skills/codex-web-bridge`。skill 目录内只放 Codex 执行通信桥任务需要的内容；仓库级维护说明放在根目录。
 
 ## 维护校验
 
@@ -11,23 +11,24 @@ find . -path ./.git -prune -o -maxdepth 5 -type f -print | sort
 git status --short
 git diff --stat
 python3 -m py_compile \
-  skills/review-gate/scripts/build_context_packet.py \
-  skills/review-gate/scripts/scrub_context.py
-ruby -ryaml -e 'front=File.read("skills/review-gate/SKILL.md").split(/^---\s*$/)[1]; YAML.safe_load(front).fetch("name"); YAML.load_file("skills/review-gate/agents/openai.yaml").fetch("interface"); puts "yaml OK"'
-python3 skills/review-gate/scripts/build_context_packet.py \
+  skills/codex-web-bridge/scripts/build_context_packet.py \
+  skills/codex-web-bridge/scripts/scrub_context.py
+ruby -ryaml -e 'front=File.read("skills/codex-web-bridge/SKILL.md").split(/^---\s*$/)[1]; YAML.safe_load(front).fetch("name"); YAML.load_file("skills/codex-web-bridge/agents/openai.yaml").fetch("interface"); puts "yaml OK"'
+python3 skills/codex-web-bridge/scripts/build_context_packet.py \
   --repo . \
-  --mode implementation-review \
-  --decision "Verify review-gate before release" \
+  --provider chatgpt \
+  --purpose planning \
+  --question "Verify codex-web-bridge before release" \
   --scope "Current repository state" \
-  --output /tmp/review-gate-context.md
-python3 skills/review-gate/scripts/scrub_context.py /tmp/review-gate-context.md --fail-on block
+  --output /tmp/codex-web-bridge-packet.md
+python3 skills/codex-web-bridge/scripts/scrub_context.py /tmp/codex-web-bridge-packet.md --fail-on block
 git diff --check
 ```
 
 如果本机装了 `PyYAML`，也运行官方 skill 校验脚本：
 
 ```bash
-python3 /path/to/skill-creator/scripts/quick_validate.py skills/review-gate
+python3 /path/to/skill-creator/scripts/quick_validate.py skills/codex-web-bridge
 ```
 
 如果本机装了 secret 扫描工具，也运行：
@@ -40,7 +41,8 @@ trufflehog filesystem . --no-update --fail
 ## 修改原则
 
 - 默认 README 使用中文。
-- `skills/review-gate/SKILL.md` 保持短而可执行，把长模板和细则放进 `references/`。
+- `skills/codex-web-bridge/SKILL.md` 保持短而可执行，把 provider 细节和响应抓取规则放进 `references/`。
 - 只有重复、易错、需要确定性的步骤才放进 `scripts/`。
 - 不要在 skill 目录里增加 README、安装指南、发布日志等维护文档。
 - 修改外发逻辑时，优先保证“不发送 BLOCK scrub finding”这个安全边界。
+- 不要把本项目重新扩大成审查框架或 MCP connector；核心边界是网页模型通信。
