@@ -15,3 +15,7 @@
 - 新增 provider 指南，覆盖 ChatGPT、Claude、Grok、Gemini 和其他网页模型。
 - 新增响应抓取指南，明确等待、完整性和 traceability 规则。
 - 新增 `bridge_handoff.py`，支持用 `.codex-web-bridge/outbox/<id>` 生成网页模型粘贴内容，并用 `.codex-web-bridge/inbox/<id>` 保存回复。
+
+### Fixed
+
+- `bridge_handoff.py list` 现在也会显示只有 inbox 响应、没有 outbox manifest 的网页响应导入记录。

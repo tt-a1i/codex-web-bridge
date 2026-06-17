@@ -35,6 +35,13 @@ python3 skills/codex-web-bridge/scripts/bridge_handoff.py done \
   "$(basename "$(find /tmp/codex-web-bridge-handoff/outbox -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)")" \
   --bridge-dir /tmp/codex-web-bridge-handoff \
   --response-text "Synthetic model response for validation."
+python3 skills/codex-web-bridge/scripts/bridge_handoff.py done \
+  response-only-smoke \
+  --bridge-dir /tmp/codex-web-bridge-handoff \
+  --provider chatgpt \
+  --response-text "Synthetic response-only import."
+python3 skills/codex-web-bridge/scripts/bridge_handoff.py list \
+  --bridge-dir /tmp/codex-web-bridge-handoff
 git diff --check
 ```
 

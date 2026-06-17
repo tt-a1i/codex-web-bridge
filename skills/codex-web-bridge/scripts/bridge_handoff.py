@@ -374,14 +374,16 @@ def list_handoffs(args: argparse.Namespace) -> int:
     bridge_root = resolve_bridge_root(repo, args.bridge_dir)
     outbox_root = bridge_root / "outbox"
     inbox_root = bridge_root / "inbox"
-    if not outbox_root.exists():
-        print("[no handoffs]")
-        return 0
 
     rows: list[tuple[str, str, str, str, str]] = []
-    for manifest_path in sorted(outbox_root.glob("*/manifest.json")):
+    seen: set[str] = set()
+    outbox_manifests = sorted(outbox_root.glob("*/manifest.json")) if outbox_root.exists() else []
+    inbox_manifests = sorted(inbox_root.glob("*/manifest.json")) if inbox_root.exists() else []
+
+    for manifest_path in outbox_manifests:
         manifest = read_json(manifest_path)
         handoff_id = manifest.get("handoff_id", manifest_path.parent.name)
+        seen.add(handoff_id)
         has_response = (inbox_root / handoff_id / "response.md").exists()
         status = "response-imported" if has_response else manifest.get("status", "outbox-ready")
         question = re.sub(r"\s+", " ", manifest.get("question", "")).strip()
@@ -394,6 +396,21 @@ def list_handoffs(args: argparse.Namespace) -> int:
                 manifest.get("provider", "unknown"),
                 manifest.get("purpose", "unknown"),
                 question,
+            )
+        )
+
+    for manifest_path in inbox_manifests:
+        manifest = read_json(manifest_path)
+        handoff_id = manifest.get("handoff_id", manifest_path.parent.name)
+        if handoff_id in seen:
+            continue
+        rows.append(
+            (
+                handoff_id,
+                manifest.get("status", "response-imported"),
+                manifest.get("provider", "unknown"),
+                manifest.get("purpose", "unknown"),
+                re.sub(r"\s+", " ", manifest.get("notes", "") or "[response-only import]").strip()[:64],
             )
         )
 
