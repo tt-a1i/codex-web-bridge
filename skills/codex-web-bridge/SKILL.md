@@ -13,6 +13,7 @@ This skill does:
 
 - Build a bounded context packet from the current repo, diff, selected files, logs, and user question.
 - Run a local scrub check before anything is sent to a third-party web model.
+- Optionally create a file-based outbox/inbox handoff under `.codex-web-bridge/` for traceability.
 - Use an approved browser session to send the packet to ChatGPT Pro, Claude, Grok, Gemini, or another selected web model.
 - Wait for completion and capture the full response.
 - Return the response to the user or use it as input for the next Codex step when the user asked Codex to continue.
@@ -60,20 +61,35 @@ python3 /path/to/codex-web-bridge/scripts/scrub_context.py \
    - `WARN`: review and redact or summarize before sending when appropriate.
    - `BLOCK`: do not send externally. Remove or summarize sensitive material, then rerun the scrub.
 
-4. Submit through the web provider.
+4. Create a file handoff when the interaction should be traceable or resumed later.
+
+```bash
+python3 /path/to/codex-web-bridge/scripts/bridge_handoff.py create \
+  --repo "$PWD" \
+  --provider chatgpt \
+  --purpose planning \
+  --question "What is the safest implementation plan for this change?" \
+  --scope "Current implementation diff"
+```
+
+   - Send `01_PASTE_TO_WEB_MODEL.md` from the generated outbox.
+   - Import the copied model response with `bridge_handoff.py done <handoff-id> --from-clipboard` or `--response-file`.
+   - Keep `.codex-web-bridge/` local; it may contain proprietary task context and model output.
+
+5. Submit through the web provider.
    - Read `references/providers.md` before using a provider that is not already familiar in the current browser session.
    - Prefer the Browser or Chrome skill appropriate to the user's active session and login state.
    - Reuse an existing relevant thread when it preserves context; start a new thread when the old one is stale, noisy, unrelated, or the user asks for a clean thread.
    - Verify the visible model/provider when possible. If model selection cannot be verified, say so.
    - Paste or type the final packet and submit it only after the scrub result is acceptable.
 
-5. Wait and capture.
+6. Wait and capture.
    - Read `references/response-capture.md` for provider-agnostic completion checks.
    - Do not abandon slow Pro/large-model responses just because they take 10-15 minutes.
    - If login, auth, CAPTCHA, browser interruption, or model access blocks the bridge, report the specific blocker and wait for user direction.
    - Capture the final answer with enough surrounding context to avoid losing code blocks, lists, or follow-up questions.
 
-6. Return control.
+7. Return control.
    - If the user only asked for the model's answer, report it clearly with provider and thread context.
    - If the user asked Codex to continue, use the response as advisory input and proceed with normal Codex execution, including local verification for any code changes.
    - Preserve traceability: provider, model if known, packet summary, scrub result, response summary, and any browser blocker.
@@ -102,5 +118,6 @@ Next:
 
 - `scripts/build_context_packet.py`: Generate a bounded Markdown packet from Git state, diffs, selected evidence files, and bridge metadata.
 - `scripts/scrub_context.py`: Scan a packet for obvious secrets and sensitive transmission risks before external submission.
+- `scripts/bridge_handoff.py`: Create `.codex-web-bridge/outbox/<id>` prompts and import `.codex-web-bridge/inbox/<id>` responses.
 - `references/providers.md`: Provider-specific browser guidance for ChatGPT, Claude, Grok, Gemini, and generic web models.
 - `references/response-capture.md`: Rules for waiting on and extracting model responses.

@@ -21,6 +21,7 @@ Use fixed waits only as a fallback, and follow them with a concrete state check.
 - If the response is truncated by the provider UI, report truncation and ask whether to request continuation.
 - If the model asks a clarification question, return that question instead of inventing an answer.
 - If the page generated multiple candidate answers, identify which one was selected or visible.
+- When using a file handoff, save the final answer through `bridge_handoff.py done <handoff-id>` so `.codex-web-bridge/inbox/<handoff-id>/response.md` is the durable response copy.
 
 ## Traceability
 
@@ -29,6 +30,7 @@ Report:
 - Provider and model if visible.
 - Thread URL or enough context to identify the conversation.
 - Packet scope and scrub result.
+- Outbox/inbox handoff id when `bridge_handoff.py` was used.
 - Whether the response was complete, truncated, interrupted, or blocked.
 
 ## No Extra Judgment

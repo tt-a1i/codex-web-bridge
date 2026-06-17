@@ -11,6 +11,7 @@ find . -path ./.git -prune -o -maxdepth 5 -type f -print | sort
 git status --short
 git diff --stat
 python3 -m py_compile \
+  skills/codex-web-bridge/scripts/bridge_handoff.py \
   skills/codex-web-bridge/scripts/build_context_packet.py \
   skills/codex-web-bridge/scripts/scrub_context.py
 ruby -ryaml -e 'front=File.read("skills/codex-web-bridge/SKILL.md").split(/^---\s*$/)[1]; YAML.safe_load(front).fetch("name"); YAML.load_file("skills/codex-web-bridge/agents/openai.yaml").fetch("interface"); puts "yaml OK"'
@@ -22,6 +23,18 @@ python3 skills/codex-web-bridge/scripts/build_context_packet.py \
   --scope "Current repository state" \
   --output /tmp/codex-web-bridge-packet.md
 python3 skills/codex-web-bridge/scripts/scrub_context.py /tmp/codex-web-bridge-packet.md --fail-on block
+rm -rf /tmp/codex-web-bridge-handoff
+python3 skills/codex-web-bridge/scripts/bridge_handoff.py create \
+  --repo . \
+  --bridge-dir /tmp/codex-web-bridge-handoff \
+  --provider chatgpt \
+  --purpose planning \
+  --question "Verify file handoff protocol" \
+  --scope "Current repository state"
+python3 skills/codex-web-bridge/scripts/bridge_handoff.py done \
+  "$(basename "$(find /tmp/codex-web-bridge-handoff/outbox -mindepth 1 -maxdepth 1 -type d | sort | tail -n 1)")" \
+  --bridge-dir /tmp/codex-web-bridge-handoff \
+  --response-text "Synthetic model response for validation."
 git diff --check
 ```
 
@@ -45,4 +58,5 @@ trufflehog filesystem . --no-update --fail
 - 只有重复、易错、需要确定性的步骤才放进 `scripts/`。
 - 不要在 skill 目录里增加 README、安装指南、发布日志等维护文档。
 - 修改外发逻辑时，优先保证“不发送 BLOCK scrub finding”这个安全边界。
+- `.codex-web-bridge/` 是本地运行态，不要提交真实 outbox/inbox 内容。
 - 不要把本项目重新扩大成审查框架或 MCP connector；核心边界是网页模型通信。

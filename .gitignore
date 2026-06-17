@@ -28,6 +28,7 @@ temp/
 
 # Local Codex/agent runtime state.
 .codex/
+.codex-web-bridge/
 .agents/tmp/
 .agents/cache/
 .agents/logs/
