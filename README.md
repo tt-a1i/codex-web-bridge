@@ -38,9 +38,29 @@
 
 这是新增的设计方向：像 DevSpace 那样启动一个本地 MCP connector，让 ChatGPT Pro、Claude 或其他 MCP host 连接到用户允许的本地 workspace。这样即使本地 agent 不支持浏览器操作，也可以让网页端 GPT Pro 使用本地项目上下文。
 
-这个模式和 Bridge Mode 的信任边界完全不同：Connector Mode 是网页模型主动调用本地工具。第一版应该默认只读，只开放 workspace、read、search、list、git status/diff 等能力；写文件、运行 shell、worktree 执行都必须是显式高信任升级。
+这个模式和 Bridge Mode 的信任边界完全不同：Connector Mode 是网页模型主动调用本地工具。第一版默认只读，只开放 workspace、read、search、list、git status/diff 等能力；写文件、运行 shell、worktree 执行都必须是显式高信任升级。
 
 参考设计见 [skills/codex-web-bridge/references/mcp-connector-mode.md](skills/codex-web-bridge/references/mcp-connector-mode.md)。
+
+`connector/` 下提供了一个**只读优先**的本地脚手架实现，刻意独立于 Bridge Mode 的 skill 运行态：
+
+```bash
+# 1. 复制并编辑配置（allowed_roots 必须指向具体仓库，不能是 ~ 或 /）
+cp connector/connector.example.json connector/connector.local.json
+
+# 2. 启动本地 connector（默认绑定 127.0.0.1，需要 owner token）
+python3 -m connector.server --config connector/connector.local.json
+
+# 3. 运行安全测试（路径包含 + 权限分级）
+python3 -m unittest connector.tests.test_connector
+```
+
+约定：
+
+- `trust_level` 默认 `readonly`；`review` / `execute` 需用户显式升级，且 `execute`（写文件/shell/worktree）尚未实现。
+- 默认绑定 loopback；绑定非 loopback host 必须配置 `owner_token`。
+- 公网隧道由用户自管，隧道 URL 不是 secret，真正的保护是 owner token。
+- 所有 workspace 相对路径都强制包含校验，拒绝绝对路径、`..` 逃逸和 symlink 逃逸。
 
 ## 安装
 
@@ -156,6 +176,15 @@ skills/codex-web-bridge/
     ├── bridge_handoff.py
     ├── build_context_packet.py
     └── scrub_context.py
+
+connector/
+├── __init__.py
+├── config.py                # trust 模型 + allowed roots 校验
+├── workspace.py             # workspace 解析 + 路径包含边界
+├── tools.py                 # 只读工具面 + 权限分级
+├── server.py                # 本地 JSON-RPC 服务（loopback + owner token）
+├── connector.example.json
+└── tests/test_connector.py  # 路径包含 + 权限分级测试
 ```
 
 ## 隐私边界

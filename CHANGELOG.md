@@ -17,6 +17,7 @@
 - 新增 `bridge_handoff.py`，支持用 `.codex-web-bridge/outbox/<id>` 生成网页模型粘贴内容，并用 `.codex-web-bridge/inbox/<id>` 保存回复。
 - 新增浏览器 surface 选择说明，支持普通 Chrome/浏览器、Codex 应用侧边栏浏览器和手动粘贴，并提示侧边栏首次使用可能需要登录认证。
 - 新增 MCP Connector Mode 设计参考，用于 DevSpace-like 工作流，让 ChatGPT Pro 或其他 MCP host 在用户授权后连接本地 workspace，服务不支持浏览器操作的 agent/host 场景。
+- 新增 `connector/` 只读优先脚手架：包含 trust 模型与 allowed roots 校验（`config.py`）、路径包含边界（`workspace.py`）、只读工具面与权限分级（`tools.py`）、本地 JSON-RPC 服务（`server.py`，默认 loopback + owner token），以及路径包含与权限分级测试（`tests/test_connector.py`）。写文件/shell/worktree 等 execute 工具尚未实现，须在独立信任模型和测试就绪后再加入。
 
 ### Fixed
 
