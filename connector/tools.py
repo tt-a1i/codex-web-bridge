@@ -11,6 +11,7 @@ file contents wholesale.
 from __future__ import annotations
 
 import subprocess
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable
@@ -18,17 +19,27 @@ from typing import Any, Callable
 from .config import ConnectorConfig
 from .workspace import WorkspaceRegistry
 
+_WS_ID = {"type": "string", "description": "Workspace id from open_workspace."}
+_REL_PATH = {"type": "string", "description": "Workspace-relative path."}
+
 # Bounds applied to readonly responses.
 MAX_READ_BYTES = 64 * 1024
 MAX_LIST_ENTRIES = 500
 MAX_SEARCH_RESULTS = 200
+MAX_SEARCH_FILES = 5000  # cap files scanned per search to bound CPU/IO
+MAX_SEARCH_FILE_BYTES = 1 * 1024 * 1024  # skip files larger than this in search
+SEARCH_DEADLINE_SECONDS = 5.0
 GIT_TIMEOUT = 10
 
 _IGNORED_DIRS = {".git", "node_modules", "dist", "build", ".cache", "__pycache__"}
 
 
 class ToolError(ValueError):
-    """Raised when a tool call is invalid or not permitted."""
+    """Raised when a tool call is invalid (e.g. unknown tool, bad arguments)."""
+
+
+class ToolPermissionError(ToolError):
+    """Raised when a tool exists but is above the configured trust level."""
 
 
 @dataclass(frozen=True)
@@ -37,6 +48,7 @@ class Tool:
     level: str  # one of TRUST_LEVELS
     handler: Callable[["ToolContext", dict[str, Any]], dict[str, Any]]
     description: str
+    input_schema: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -66,7 +78,8 @@ def _git(root: Path, git_args: list[str]) -> str:
     except subprocess.TimeoutExpired:
         raise ToolError("git command timed out") from None
     if proc.returncode != 0:
-        raise ToolError(f"git failed: {proc.stderr.strip() or 'unknown error'}")
+        # Don't forward raw git stderr (may contain absolute paths/config).
+        raise ToolError("git command failed")
     return proc.stdout
 
 
@@ -76,33 +89,39 @@ def _git(root: Path, git_args: list[str]) -> str:
 def _open_workspace(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     path = _require(args, "path")
     ws = ctx.registry.open_workspace(str(path))
-    return {"workspace_id": ws.workspace_id, "root": str(ws.root)}
+    # Do not leak the absolute local root to the remote host; only the basename.
+    return {"workspace_id": ws.workspace_id, "name": ws.root.name}
 
 
 def _read(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     ws = ctx.registry.get(str(_require(args, "workspace_id")))
-    target = ws.resolve(str(_require(args, "path")))
-    if not target.is_file():
-        raise ToolError(f"not a file: {args['path']}")
+    rel = str(_require(args, "path"))
+    target = ws.resolve_file(rel)
     data = target.read_bytes()[:MAX_READ_BYTES]
     text = data.decode("utf-8", errors="replace")
     truncated = target.stat().st_size > MAX_READ_BYTES
-    return {"path": str(args["path"]), "content": text, "truncated": truncated}
+    return {"path": rel, "content": text, "truncated": truncated}
 
 
 def _list(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     ws = ctx.registry.get(str(_require(args, "workspace_id")))
-    target = ws.resolve(str(args.get("path", ".")))
-    if not target.is_dir():
-        raise ToolError(f"not a directory: {args.get('path', '.')}")
+    target = ws.resolve_dir(str(args.get("path", ".")))
     entries: list[dict[str, Any]] = []
+    truncated = False
     for child in sorted(target.iterdir()):
         if child.name in _IGNORED_DIRS:
             continue
-        entries.append({"name": child.name, "dir": child.is_dir()})
         if len(entries) >= MAX_LIST_ENTRIES:
+            truncated = True
             break
-    return {"entries": entries, "truncated": len(entries) >= MAX_LIST_ENTRIES}
+        entries.append(
+            {
+                "name": child.name,
+                "dir": child.is_dir() and not child.is_symlink(),
+                "symlink": child.is_symlink(),
+            }
+        )
+    return {"entries": entries, "truncated": truncated}
 
 
 def _search(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
@@ -110,14 +129,25 @@ def _search(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     query = str(_require(args, "query"))
     if not query:
         raise ToolError("query must be non-empty")
-    base = ws.resolve(str(args.get("path", ".")))
+    base = ws.resolve_dir(str(args.get("path", ".")))
     results: list[dict[str, Any]] = []
+    deadline = time.monotonic() + SEARCH_DEADLINE_SECONDS
+    scanned = 0
     for file in base.rglob("*"):
         if any(part in _IGNORED_DIRS for part in file.parts):
             continue
+        # Re-validate containment for every candidate and skip symlinks so a
+        # symlink inside the tree can't leak a file from outside the root.
+        if not ws.contains(file):
+            continue
         if not file.is_file():
             continue
+        scanned += 1
+        if scanned > MAX_SEARCH_FILES or time.monotonic() > deadline:
+            return {"results": results, "truncated": True}
         try:
+            if file.stat().st_size > MAX_SEARCH_FILE_BYTES:
+                continue
             for line_no, line in enumerate(
                 file.read_text(encoding="utf-8", errors="ignore").splitlines(), 1
             ):
@@ -152,18 +182,67 @@ def _git_diff(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
 
 
 READONLY_TOOLS = [
-    Tool("open_workspace", "readonly", _open_workspace,
-         "Open a path inside an allowed root and return a workspace id."),
-    Tool("read", "readonly", _read,
-         "Read bounded text from a workspace-relative file."),
-    Tool("list", "readonly", _list,
-         "List a workspace-relative directory with bounded entries."),
-    Tool("search", "readonly", _search,
-         "Search text with ignore rules and bounded results."),
-    Tool("git_status", "readonly", _git_status,
-         "Return branch, HEAD, and short status."),
-    Tool("git_diff", "readonly", _git_diff,
-         "Return bounded diff and stat for the workspace."),
+    Tool(
+        "open_workspace", "readonly", _open_workspace,
+        "Open a path inside an allowed root and return a workspace id.",
+        {
+            "type": "object",
+            "properties": {"path": {"type": "string", "description": "Absolute path inside an allowed root."}},
+            "required": ["path"],
+        },
+    ),
+    Tool(
+        "read", "readonly", _read,
+        "Read bounded text from a workspace-relative file.",
+        {
+            "type": "object",
+            "properties": {"workspace_id": _WS_ID, "path": _REL_PATH},
+            "required": ["workspace_id", "path"],
+        },
+    ),
+    Tool(
+        "list", "readonly", _list,
+        "List a workspace-relative directory with bounded entries.",
+        {
+            "type": "object",
+            "properties": {
+                "workspace_id": _WS_ID,
+                "path": {"type": "string", "description": "Workspace-relative directory (default '.')."},
+            },
+            "required": ["workspace_id"],
+        },
+    ),
+    Tool(
+        "search", "readonly", _search,
+        "Search text with ignore rules and bounded results.",
+        {
+            "type": "object",
+            "properties": {
+                "workspace_id": _WS_ID,
+                "query": {"type": "string", "description": "Substring to search for."},
+                "path": {"type": "string", "description": "Workspace-relative base directory (default '.')."},
+            },
+            "required": ["workspace_id", "query"],
+        },
+    ),
+    Tool(
+        "git_status", "readonly", _git_status,
+        "Return branch, HEAD, and short status.",
+        {
+            "type": "object",
+            "properties": {"workspace_id": _WS_ID},
+            "required": ["workspace_id"],
+        },
+    ),
+    Tool(
+        "git_diff", "readonly", _git_diff,
+        "Return bounded diff and stat for the workspace.",
+        {
+            "type": "object",
+            "properties": {"workspace_id": _WS_ID},
+            "required": ["workspace_id"],
+        },
+    ),
 ]
 
 
@@ -178,18 +257,26 @@ class ToolRegistry:
         """Tools permitted at the configured trust level."""
         return [t for t in self._tools.values() if self._ctx.config.allows(t.level)]
 
-    def describe(self) -> list[dict[str, str]]:
-        return [
-            {"name": t.name, "level": t.level, "description": t.description}
-            for t in self.available()
-        ]
+    def describe(self) -> list[dict[str, Any]]:
+        """MCP tool definitions for tools/list."""
+        out: list[dict[str, Any]] = []
+        for t in self.available():
+            out.append(
+                {
+                    "name": t.name,
+                    "title": t.name.replace("_", " ").title(),
+                    "description": f"[{t.level}] {t.description}",
+                    "inputSchema": t.input_schema,
+                }
+            )
+        return out
 
     def call(self, name: str, args: dict[str, Any]) -> dict[str, Any]:
         tool = self._tools.get(name)
         if tool is None:
             raise ToolError(f"unknown tool: {name}")
         if not self._ctx.config.allows(tool.level):
-            raise ToolError(
+            raise ToolPermissionError(
                 f"tool {name!r} requires '{tool.level}' trust, "
                 f"server is '{self._ctx.config.trust_level}'"
             )

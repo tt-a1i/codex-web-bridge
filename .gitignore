@@ -19,6 +19,10 @@ dist/
 build/
 coverage/
 
+# Python bytecode
+__pycache__/
+*.pyc
+
 # Logs and scratch output
 *.log
 logs/

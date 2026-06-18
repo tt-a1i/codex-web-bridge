@@ -7,13 +7,20 @@ Run with: python3 -m unittest connector.tests.test_connector
 from __future__ import annotations
 
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
 
 from connector.config import ConfigError, ConnectorConfig
-from connector.tools import ToolContext, ToolError, ToolRegistry
-from connector.workspace import WorkspaceError, WorkspaceRegistry
+from connector.tools import (
+    READONLY_TOOLS,
+    Tool,
+    ToolContext,
+    ToolError,
+    ToolRegistry,
+)
+from connector.workspace import MAX_OPEN_WORKSPACES, WorkspaceError, WorkspaceRegistry
 
 
 class ConfigTests(unittest.TestCase):
@@ -75,15 +82,15 @@ class WorkspaceContainmentTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_resolves_inside(self) -> None:
-        self.assertEqual(self.ws.resolve("inside.txt"), self.root / "inside.txt")
+        self.assertEqual(self.ws.resolve_file("inside.txt"), self.root / "inside.txt")
 
     def test_rejects_absolute_path(self) -> None:
         with self.assertRaises(WorkspaceError):
-            self.ws.resolve("/etc/passwd")
+            self.ws.resolve_file("/etc/passwd")
 
     def test_rejects_parent_traversal(self) -> None:
         with self.assertRaises(WorkspaceError):
-            self.ws.resolve("../escape.txt")
+            self.ws.resolve_file("../escape.txt")
 
     def test_rejects_symlink_escape(self) -> None:
         outside = Path(tempfile.mkdtemp())
@@ -92,10 +99,19 @@ class WorkspaceContainmentTests(unittest.TestCase):
             link = self.root / "link"
             os.symlink(outside / "secret.txt", link)
             with self.assertRaises(WorkspaceError):
-                self.ws.resolve("link")
+                self.ws.resolve_file("link")
         finally:
-            import shutil
+            shutil.rmtree(outside)
 
+    def test_contains_rejects_symlink_inside_tree(self) -> None:
+        outside = Path(tempfile.mkdtemp())
+        try:
+            (outside / "secret.txt").write_text("nope", encoding="utf-8")
+            link = self.root / "evil"
+            os.symlink(outside / "secret.txt", link)
+            # A symlink discovered during traversal must be excluded by contains().
+            self.assertFalse(self.ws.contains(link))
+        finally:
             shutil.rmtree(outside)
 
     def test_open_workspace_outside_root_rejected(self) -> None:
@@ -104,9 +120,12 @@ class WorkspaceContainmentTests(unittest.TestCase):
             with self.assertRaises(WorkspaceError):
                 self.registry.open_workspace(str(outside))
         finally:
-            import shutil
-
             shutil.rmtree(outside)
+
+    def test_registry_caps_open_workspaces(self) -> None:
+        for _ in range(MAX_OPEN_WORKSPACES + 10):
+            self.registry.open_workspace(str(self.root))
+        self.assertLessEqual(len(self.registry.list_open()), MAX_OPEN_WORKSPACES)
 
 
 class ToolPermissionTests(unittest.TestCase):
@@ -155,6 +174,27 @@ class ToolPermissionTests(unittest.TestCase):
         names = {e["name"] for e in result["entries"]}
         self.assertIn("a.txt", names)
         self.assertNotIn("node_modules", names)
+
+    def test_open_workspace_redacts_absolute_root(self) -> None:
+        reg = self._registry("readonly")
+        ws = reg.call("open_workspace", {"path": str(self.root)})
+        self.assertNotIn("root", ws)
+        self.assertEqual(ws["name"], self.root.name)
+
+    def test_search_does_not_follow_symlink_outside_root(self) -> None:
+        outside = Path(tempfile.mkdtemp())
+        try:
+            (outside / "secret.txt").write_text("TOPSECRET", encoding="utf-8")
+            os.symlink(outside / "secret.txt", self.root / "leak.txt")
+            reg = self._registry("readonly")
+            ws = reg.call("open_workspace", {"path": str(self.root)})
+            result = reg.call(
+                "search", {"workspace_id": ws["workspace_id"], "query": "TOPSECRET"}
+            )
+            # The symlinked file must not be read, so no results leak its content.
+            self.assertEqual(result["results"], [])
+        finally:
+            shutil.rmtree(outside)
 
 
 if __name__ == "__main__":

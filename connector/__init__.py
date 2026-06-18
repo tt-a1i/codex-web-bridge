@@ -11,8 +11,6 @@ worktree tools are intentionally absent until they have their own explicit trust
 model and tests.
 """
 
-from __future__ import annotations
-
 __all__ = ["__version__"]
 
 __version__ = "0.1.0"

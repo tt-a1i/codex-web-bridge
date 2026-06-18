@@ -1,19 +1,30 @@
 #!/usr/bin/env python3
-"""Local-only JSON-RPC server for the codex-web-bridge connector.
+"""Local-only HTTP transport for the codex-web-bridge MCP connector.
 
-This is a minimal, readonly-by-default MCP-style endpoint built on the standard
-library. It binds to loopback unless explicitly configured otherwise, and it
-gates every request behind an owner token when one is set. Public exposure is
-intentionally out of scope: a tunnel is user-managed configuration, and a tunnel
-URL is not a secret, so the owner token is what actually protects access.
+This is a readonly-by-default MCP endpoint built on the standard library. It
+binds to loopback unless explicitly configured otherwise, and it gates every
+request behind an owner token when one is set. Public exposure is intentionally
+out of scope: a tunnel is user-managed configuration, and a tunnel URL is not a
+secret, so the owner token is what actually protects access.
 
-Wire shape (JSON-RPC 2.0 subset) at POST /rpc::
+The protocol itself (initialize / initialized / tools/list / tools/call) lives
+in ``protocol.py``. This module only handles HTTP transport and auth. Clients
+POST JSON-RPC messages to ``/rpc``; notifications (no ``id``) receive HTTP 202
+with no body, requests receive HTTP 200 with a JSON-RPC response.
 
-    {"jsonrpc": "2.0", "id": 1, "method": "tools/list"}
-    {"jsonrpc": "2.0", "id": 2, "method": "tools/call",
-     "params": {"name": "open_workspace", "arguments": {"path": "..."}}}
+Security boundaries enforced here:
+
+- ``Origin`` header is validated to block DNS-rebinding from a browser pointed
+  at the loopback server.
+- ``Content-Type: application/json`` is required, rejecting browser "simple
+  request" form posts that skip CORS preflight.
+- Owner token is checked in constant time when configured.
+- ``GET``/``DELETE`` return an explicit ``405`` (no server-initiated SSE stream
+  is offered) instead of the default ``501``.
 
 Auth: send the owner token via ``Authorization: Bearer <token>`` when configured.
+Session: the server issues an ``Mcp-Session-Id`` on ``initialize``; clients echo
+it on subsequent requests so initialization state is tracked per session.
 """
 
 from __future__ import annotations
@@ -24,12 +35,24 @@ import json
 import sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any
+from urllib.parse import urlparse
 
 from .config import ConnectorConfig, load_config
-from .tools import ToolContext, ToolError, ToolRegistry
-from .workspace import WorkspaceError, WorkspaceRegistry
+from .protocol import (
+    INTERNAL_ERROR,
+    INVALID_REQUEST,
+    METHOD_NOT_FOUND,
+    PARSE_ERROR,
+    ProtocolHandler,
+    error,
+)
+from .tools import ToolContext, ToolRegistry
+from .workspace import WorkspaceRegistry
 
 MAX_BODY_BYTES = 1 * 1024 * 1024
+ENDPOINT = "/rpc"
+# Loopback origins a local MCP host / inspector may legitimately use.
+_ALLOWED_ORIGIN_HOSTS = ("localhost", "127.0.0.1", "[::1]", "::1")
 
 
 def build_registry(config: ConnectorConfig) -> ToolRegistry:
@@ -37,40 +60,13 @@ def build_registry(config: ConnectorConfig) -> ToolRegistry:
     return ToolRegistry(ctx)
 
 
-def _error(req_id: Any, code: int, message: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": req_id, "error": {"code": code, "message": message}}
-
-
-def _result(req_id: Any, result: Any) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": req_id, "result": result}
-
-
-def dispatch(registry: ToolRegistry, payload: dict[str, Any]) -> dict[str, Any]:
-    req_id = payload.get("id")
-    method = payload.get("method")
-    params = payload.get("params") or {}
-
-    if method == "tools/list":
-        return _result(req_id, {"tools": registry.describe()})
-
-    if method == "tools/call":
-        name = params.get("name")
-        arguments = params.get("arguments") or {}
-        if not isinstance(name, str):
-            return _error(req_id, -32602, "params.name must be a string")
-        try:
-            return _result(req_id, registry.call(name, arguments))
-        except (ToolError, WorkspaceError) as exc:
-            return _error(req_id, -32000, str(exc))
-
-    return _error(req_id, -32601, f"unknown method: {method}")
-
-
-def _make_handler(config: ConnectorConfig, registry: ToolRegistry):
+def _make_handler(config: ConnectorConfig, protocol: ProtocolHandler, quiet: bool = False):
     class Handler(BaseHTTPRequestHandler):
         protocol_version = "HTTP/1.1"
 
         def log_message(self, fmt: str, *args: Any) -> None:  # noqa: A003
+            if quiet:
+                return
             # Log method + path only; never request bodies or file contents.
             sys.stderr.write(
                 f"[connector] {self.command} {self.path} {fmt % args}\n"
@@ -83,50 +79,124 @@ def _make_handler(config: ConnectorConfig, registry: ToolRegistry):
             prefix = "Bearer "
             if not header.startswith(prefix):
                 return False
-            presented = header[len(prefix):]
-            return hmac.compare_digest(presented, config.owner_token)
+            presented = header[len(prefix):].encode("utf-8")
+            return hmac.compare_digest(presented, config.owner_token.encode("utf-8"))
 
-        def _send_json(self, status: int, obj: dict[str, Any]) -> None:
+        def _origin_ok(self) -> bool:
+            """Reject cross-origin browser requests (DNS-rebinding defense)."""
+            origin = self.headers.get("Origin")
+            if origin is None:
+                return True  # non-browser clients omit Origin
+            try:
+                host = (urlparse(origin).hostname or "").lower()
+            except ValueError:
+                return False
+            return host in _ALLOWED_ORIGIN_HOSTS
+
+        def _send_json(self, status: int, obj: dict[str, Any],
+                       session_id: str | None = None) -> None:
             body = json.dumps(obj).encode("utf-8")
             self.send_response(status)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(body)))
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            if session_id:
+                self.send_header("Mcp-Session-Id", session_id)
             self.end_headers()
             self.wfile.write(body)
 
+        def _send_empty(self, status: int) -> None:
+            self.send_response(status)
+            self.send_header("Content-Length", "0")
+            self.send_header("X-Content-Type-Options", "nosniff")
+            self.send_header("Cache-Control", "no-store")
+            self.end_headers()
+
+        def _reject_method(self) -> None:
+            # No server-initiated SSE stream offered: explicit 405 (not 501).
+            self.send_response(405)
+            self.send_header("Allow", "POST")
+            self.send_header("Content-Length", "0")
+            self.end_headers()
+
+        def do_GET(self) -> None:  # noqa: N802
+            self._reject_method()
+
+        def do_HEAD(self) -> None:  # noqa: N802
+            self._reject_method()
+
+        def do_DELETE(self) -> None:  # noqa: N802
+            self._reject_method()
+
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != "/rpc":
-                self._send_json(404, _error(None, -32601, "not found"))
+            if self.path != ENDPOINT:
+                self._send_json(404, error(None, METHOD_NOT_FOUND, "not found"))
+                return
+            if not self._origin_ok():
+                self._send_json(403, error(None, -32001, "forbidden origin"))
                 return
             if not self._authorized():
-                self._send_json(401, _error(None, -32001, "unauthorized"))
+                self._send_json(401, error(None, -32001, "unauthorized"))
                 return
-            length = int(self.headers.get("Content-Length", "0") or "0")
+            ctype = (self.headers.get("Content-Type") or "").split(";")[0].strip()
+            if ctype != "application/json":
+                self._send_json(415, error(None, INVALID_REQUEST, "content-type must be application/json"))
+                return
+            try:
+                length = int(self.headers.get("Content-Length", "0") or "0")
+            except ValueError:
+                self._send_json(400, error(None, INVALID_REQUEST, "bad content-length"))
+                return
             if length > MAX_BODY_BYTES:
-                self._send_json(413, _error(None, -32600, "request too large"))
+                self._send_json(413, error(None, INVALID_REQUEST, "request too large"))
                 return
             raw = self.rfile.read(length) if length else b""
             try:
                 payload = json.loads(raw or b"{}")
             except json.JSONDecodeError:
-                self._send_json(400, _error(None, -32700, "parse error"))
+                self._send_json(400, error(None, PARSE_ERROR, "parse error"))
                 return
             if not isinstance(payload, dict):
-                self._send_json(400, _error(None, -32600, "invalid request"))
+                self._send_json(400, error(None, INVALID_REQUEST, "invalid request"))
                 return
-            self._send_json(200, dispatch(registry, payload))
+
+            # Track the session: issue one on initialize, echo client's otherwise.
+            session_id = self.headers.get("Mcp-Session-Id")
+            issued_session: str | None = None
+            if payload.get("method") == "initialize":
+                session_id = protocol.start_session(mark_initialized=True)
+                issued_session = session_id
+
+            try:
+                response = protocol.handle(payload, session_id=session_id)
+            except Exception:  # noqa: BLE001 - defense in depth
+                # Never leak a traceback to the client; log locally only.
+                sys.stderr.write("[connector] internal error handling request\n")
+                self._send_json(500, error(payload.get("id"), INTERNAL_ERROR, "internal error"))
+                return
+            if response is None:
+                self._send_empty(202)
+                return
+            self._send_json(200, response, session_id=issued_session)
 
     return Handler
 
 
-def serve(config: ConnectorConfig) -> None:
+def build_server(config: ConnectorConfig, quiet: bool = False) -> ThreadingHTTPServer:
+    """Create the HTTP server without starting its loop (used by tests)."""
     registry = build_registry(config)
-    handler = _make_handler(config, registry)
-    httpd = ThreadingHTTPServer((config.host, config.port), handler)
+    protocol = ProtocolHandler(registry)
+    handler = _make_handler(config, protocol, quiet=quiet)
+    return ThreadingHTTPServer((config.host, config.port), handler)
+
+
+def serve(config: ConnectorConfig) -> None:
+    httpd = build_server(config)
     where = f"http://{config.host}:{config.port}/rpc"
     auth = "owner-token required" if config.owner_token else "NO owner token (loopback only)"
     sys.stderr.write(
-        f"[connector] readonly={config.trust_level} listening on {where} ({auth})\n"
+        f"[connector] trust={config.trust_level} MCP listening on {where} ({auth})\n"
     )
     if not config.is_loopback():
         sys.stderr.write(
