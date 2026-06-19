@@ -23,6 +23,8 @@ from connector.protocol import (
 from connector.tools import READONLY_TOOLS, Tool, ToolContext, ToolRegistry
 from connector.workspace import WorkspaceRegistry
 
+_EMPTY_OUTPUT = {"type": "object", "properties": {}}
+
 
 def _handler(root: Path, trust: str = "readonly") -> ProtocolHandler:
     config = ConnectorConfig(allowed_roots=(root,), trust_level=trust)
@@ -129,6 +131,7 @@ class ToolsListTests(unittest.TestCase):
             self.assertIn("name", t)
             self.assertIn("description", t)
             self.assertEqual(t["inputSchema"]["type"], "object")
+            self.assertEqual(t["outputSchema"]["type"], "object")
         names = {t["name"] for t in tools}
         self.assertIn("open_workspace", names)
 
@@ -136,6 +139,14 @@ class ToolsListTests(unittest.TestCase):
         resp = self.s.request("tools/list")
         for t in resp["result"]["tools"]:
             self.assertTrue(t["description"].startswith("[readonly]"))
+            self.assertEqual(
+                t["annotations"],
+                {
+                    "readOnlyHint": True,
+                    "destructiveHint": False,
+                    "openWorldHint": False,
+                },
+            )
 
 
 class ToolsCallTests(unittest.TestCase):
@@ -199,7 +210,11 @@ class ToolsCallTests(unittest.TestCase):
         def _boom(_c, _a):
             raise PermissionError("/secret/abs/path denied")
 
-        boom = Tool("boom", "readonly", _boom, "boom", {"type": "object", "properties": {}})
+        boom = Tool(
+            "boom", "readonly", _boom, "boom",
+            {"type": "object", "properties": {}},
+            _EMPTY_OUTPUT,
+        )
         h = ProtocolHandler(ToolRegistry(ctx, tools=[boom]))
         sid = h.start_session(mark_initialized=True)
         resp = h.handle(
@@ -222,6 +237,7 @@ class ToolsCallTests(unittest.TestCase):
         fake = Tool(
             "fake_exec", "execute", lambda c, a: {"ok": True}, "fake",
             {"type": "object", "properties": {}},
+            _EMPTY_OUTPUT,
         )
         h = ProtocolHandler(ToolRegistry(ctx, tools=[*READONLY_TOOLS, fake]))
         sid = h.start_session(mark_initialized=True)

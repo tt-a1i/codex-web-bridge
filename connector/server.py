@@ -9,8 +9,9 @@ secret, so the owner token is what actually protects access.
 
 The protocol itself (initialize / initialized / tools/list / tools/call) lives
 in ``protocol.py``. This module only handles HTTP transport and auth. Clients
-POST JSON-RPC messages to ``/rpc``; notifications (no ``id``) receive HTTP 202
-with no body, requests receive HTTP 200 with a JSON-RPC response.
+POST JSON-RPC messages to ``/mcp``; notifications (no ``id``) receive HTTP 202
+with no body, requests receive HTTP 200 with a JSON-RPC response. ``/rpc`` is
+kept as a legacy local-development alias.
 
 Security boundaries enforced here:
 
@@ -50,7 +51,9 @@ from .tools import ToolContext, ToolRegistry
 from .workspace import WorkspaceRegistry
 
 MAX_BODY_BYTES = 1 * 1024 * 1024
-ENDPOINT = "/rpc"
+PRIMARY_ENDPOINT = "/mcp"
+LEGACY_ENDPOINT = "/rpc"
+ENDPOINTS = {PRIMARY_ENDPOINT, LEGACY_ENDPOINT}
 # Loopback origins a local MCP host / inspector may legitimately use.
 _ALLOWED_ORIGIN_HOSTS = ("localhost", "127.0.0.1", "[::1]", "::1")
 
@@ -130,7 +133,7 @@ def _make_handler(config: ConnectorConfig, protocol: ProtocolHandler, quiet: boo
             self._reject_method()
 
         def do_POST(self) -> None:  # noqa: N802
-            if self.path != ENDPOINT:
+            if self.path not in ENDPOINTS:
                 self._send_json(404, error(None, METHOD_NOT_FOUND, "not found"))
                 return
             if not self._origin_ok():
@@ -193,7 +196,7 @@ def build_server(config: ConnectorConfig, quiet: bool = False) -> ThreadingHTTPS
 
 def serve(config: ConnectorConfig) -> None:
     httpd = build_server(config)
-    where = f"http://{config.host}:{config.port}/rpc"
+    where = f"http://{config.host}:{config.port}{PRIMARY_ENDPOINT}"
     auth = "owner-token required" if config.owner_token else "NO owner token (loopback only)"
     sys.stderr.write(
         f"[connector] trust={config.trust_level} MCP listening on {where} ({auth})\n"

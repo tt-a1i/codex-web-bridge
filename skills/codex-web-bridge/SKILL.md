@@ -7,7 +7,7 @@ description: Bridge Codex to web-based AI model products by packaging local task
 
 Use this skill as a communication bridge between Codex and web-based AI model products. Codex handles context packaging, basic outbound safety checks, browser submission, waiting, and response capture. The target model and the user handle judgment.
 
-For browserless-agent scenarios, distinguish Bridge Mode from MCP Connector Mode. Connector Mode lets ChatGPT Pro or another MCP host connect to approved local workspaces through a local MCP server; read `references/mcp-connector-mode.md` before advising or designing that path. A readonly Connector Mode server is already implemented in the repo's `connector/` package and runs with `python3 -m connector.server --config <config.json>` (loopback + owner token, readonly tools only); review/execute tools are not implemented yet.
+For browserless-agent scenarios, distinguish Bridge Mode from MCP Connector Mode. Connector Mode lets ChatGPT Pro or another MCP host connect to approved local workspaces through a local MCP server; read `references/mcp-connector-mode.md` before advising or designing that path. For first-time ChatGPT Pro setup, also read `references/chatgpt-pro-mcp-setup.md` and separate the agent-side local setup from the human ChatGPT web steps. A readonly Connector Mode server is already implemented in the repo's `connector/` package and runs with `python3 -m connector.server --config <config.json>` (loopback + owner token, readonly tools only); review/execute tools are not implemented yet.
 
 ## Boundary
 
@@ -20,6 +20,7 @@ This skill does:
 - Wait for completion and capture the full response.
 - Return the response to the user or use it as input for the next Codex step when the user asked Codex to continue.
 - Explain MCP Connector Mode when browser automation is unavailable or the user wants GPT Pro to work through MCP.
+- Guide first-time ChatGPT Pro connector setup by giving the user only the required web UI steps after the local server and tunnel are ready.
 
 This skill does not:
 
@@ -32,7 +33,7 @@ This skill does not:
 
 ## Workflow
 
-If the user asks for a DevSpace-like setup, MCP connector, or using GPT Pro from an agent that cannot operate a browser, read `references/mcp-connector-mode.md` and explain the two-mode choice before proceeding.
+If the user asks for a DevSpace-like setup, MCP connector, or using GPT Pro from an agent that cannot operate a browser, read `references/mcp-connector-mode.md` and `references/chatgpt-pro-mcp-setup.md`, then explain the two-mode choice before proceeding. If the user already chose MCP Connector Mode, follow the setup runbook instead of the Bridge Mode browser workflow.
 
 1. Define the bridge request.
    - State the destination provider: `chatgpt`, `claude`, `grok`, `gemini`, or `other`.
@@ -132,4 +133,5 @@ Next:
 - `scripts/bridge_handoff.py`: Create `.codex-web-bridge/outbox/<id>` prompts and import `.codex-web-bridge/inbox/<id>` responses.
 - `references/providers.md`: Provider-specific browser guidance for ChatGPT, Claude, Grok, Gemini, and generic web models.
 - `references/mcp-connector-mode.md`: Design guidance for DevSpace-like MCP connector workflows and trust levels.
+- `references/chatgpt-pro-mcp-setup.md`: First-time ChatGPT Pro connector setup, golden prompt, shutdown, and troubleshooting runbook.
 - `references/response-capture.md`: Rules for waiting on and extracting model responses.

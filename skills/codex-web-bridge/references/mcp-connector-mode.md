@@ -4,6 +4,9 @@ Use this reference when the user wants a DevSpace-like flow where ChatGPT Pro,
 Claude, or another MCP-capable web host connects to a local workspace through
 MCP instead of relying on Codex browser automation.
 
+For the practical first-time ChatGPT Pro setup steps, read
+`chatgpt-pro-mcp-setup.md` after this file.
+
 ## Mental Model
 
 Bridge Mode and Connector Mode are different directions:
@@ -84,6 +87,11 @@ offer:
 
 Mention that Connector Mode requires setup: local server, allowed roots, owner
 approval, and usually a user-managed HTTPS tunnel for web hosts.
+
+When the local agent cannot operate a browser, it should still complete the
+local side: validate the connector, create the local config, start the readonly
+server, start the HTTPS tunnel, and give the user the ChatGPT web checklist from
+`chatgpt-pro-mcp-setup.md`.
 
 ## Non-Goals
 

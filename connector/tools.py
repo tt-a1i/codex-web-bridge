@@ -49,6 +49,7 @@ class Tool:
     handler: Callable[["ToolContext", dict[str, Any]], dict[str, Any]]
     description: str
     input_schema: dict[str, Any]
+    output_schema: dict[str, Any]
 
 
 @dataclass(frozen=True)
@@ -181,6 +182,19 @@ def _git_diff(ctx: ToolContext, args: dict[str, Any]) -> dict[str, Any]:
     return {"stat": stat, "diff": diff, "truncated": len(diff) >= MAX_READ_BYTES}
 
 
+def _object_schema(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+        "additionalProperties": False,
+    }
+
+
+def _array_of(item: dict[str, Any]) -> dict[str, Any]:
+    return {"type": "array", "items": item}
+
+
 READONLY_TOOLS = [
     Tool(
         "open_workspace", "readonly", _open_workspace,
@@ -190,6 +204,13 @@ READONLY_TOOLS = [
             "properties": {"path": {"type": "string", "description": "Absolute path inside an allowed root."}},
             "required": ["path"],
         },
+        _object_schema(
+            {
+                "workspace_id": {"type": "string"},
+                "name": {"type": "string"},
+            },
+            ["workspace_id", "name"],
+        ),
     ),
     Tool(
         "read", "readonly", _read,
@@ -199,6 +220,14 @@ READONLY_TOOLS = [
             "properties": {"workspace_id": _WS_ID, "path": _REL_PATH},
             "required": ["workspace_id", "path"],
         },
+        _object_schema(
+            {
+                "path": {"type": "string"},
+                "content": {"type": "string"},
+                "truncated": {"type": "boolean"},
+            },
+            ["path", "content", "truncated"],
+        ),
     ),
     Tool(
         "list", "readonly", _list,
@@ -211,6 +240,22 @@ READONLY_TOOLS = [
             },
             "required": ["workspace_id"],
         },
+        _object_schema(
+            {
+                "entries": _array_of(
+                    _object_schema(
+                        {
+                            "name": {"type": "string"},
+                            "dir": {"type": "boolean"},
+                            "symlink": {"type": "boolean"},
+                        },
+                        ["name", "dir", "symlink"],
+                    )
+                ),
+                "truncated": {"type": "boolean"},
+            },
+            ["entries", "truncated"],
+        ),
     ),
     Tool(
         "search", "readonly", _search,
@@ -224,6 +269,22 @@ READONLY_TOOLS = [
             },
             "required": ["workspace_id", "query"],
         },
+        _object_schema(
+            {
+                "results": _array_of(
+                    _object_schema(
+                        {
+                            "path": {"type": "string"},
+                            "line": {"type": "integer"},
+                            "text": {"type": "string"},
+                        },
+                        ["path", "line", "text"],
+                    )
+                ),
+                "truncated": {"type": "boolean"},
+            },
+            ["results", "truncated"],
+        ),
     ),
     Tool(
         "git_status", "readonly", _git_status,
@@ -233,6 +294,14 @@ READONLY_TOOLS = [
             "properties": {"workspace_id": _WS_ID},
             "required": ["workspace_id"],
         },
+        _object_schema(
+            {
+                "branch": {"type": "string"},
+                "head": {"type": "string"},
+                "status": {"type": "string"},
+            },
+            ["branch", "head", "status"],
+        ),
     ),
     Tool(
         "git_diff", "readonly", _git_diff,
@@ -242,6 +311,14 @@ READONLY_TOOLS = [
             "properties": {"workspace_id": _WS_ID},
             "required": ["workspace_id"],
         },
+        _object_schema(
+            {
+                "stat": {"type": "string"},
+                "diff": {"type": "string"},
+                "truncated": {"type": "boolean"},
+            },
+            ["stat", "diff", "truncated"],
+        ),
     ),
 ]
 
@@ -267,6 +344,12 @@ class ToolRegistry:
                     "title": t.name.replace("_", " ").title(),
                     "description": f"[{t.level}] {t.description}",
                     "inputSchema": t.input_schema,
+                    "outputSchema": t.output_schema,
+                    "annotations": {
+                        "readOnlyHint": t.level == "readonly",
+                        "destructiveHint": False,
+                        "openWorldHint": False,
+                    },
                 }
             )
         return out

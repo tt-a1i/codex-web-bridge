@@ -55,7 +55,9 @@ python3 -m connector.server --config connector/connector.local.json
 python3 -m unittest discover -s connector/tests -t .
 ```
 
-MCP host 通过 `POST /rpc` 发送 JSON-RPC 2.0 消息，鉴权用 `Authorization: Bearer <owner_token>`。`initialize` 会做协议版本协商（支持 `2025-06-18` / `2025-03-26` / `2024-11-05`）并返回 `serverInfo`、`tools` 能力以及响应头 `Mcp-Session-Id`，host 在后续请求里回带该 session id。`initialize` 之前（除 `ping`）的请求会被拒绝；通知（无 `id`）返回 HTTP 202 空响应。
+网页端 ChatGPT / GPT Pro 接入时，Connector URL 填公开可达或 Tunnel 暴露的 `/mcp` 地址，例如 `https://<tunnel-host>/mcp`。本地私有仓库优先使用 ChatGPT 支持的 Secure MCP Tunnel；如果改用 ngrok / Cloudflare Tunnel 暴露公网地址，不要在无 OAuth 或等效保护的情况下长期开放本地源码读取能力。当前 `owner_token` 是给本地/自管 MCP client 用的简单 Bearer gate，不是完整的 ChatGPT OAuth 接入方案。
+
+MCP host 通过 `POST /mcp` 发送 JSON-RPC 2.0 消息，鉴权用 `Authorization: Bearer <owner_token>`。`/rpc` 作为旧本地调试路径继续兼容。`initialize` 会做协议版本协商（支持 `2025-06-18` / `2025-03-26` / `2024-11-05`）并返回 `serverInfo`、`tools` 能力以及响应头 `Mcp-Session-Id`，host 在后续请求里回带该 session id。`initialize` 之前（除 `ping`）的请求会被拒绝；通知（无 `id`）返回 HTTP 202 空响应。
 
 约定与安全边界：
 
@@ -67,6 +69,18 @@ MCP host 通过 `POST /rpc` 发送 JSON-RPC 2.0 消息，鉴权用 `Authorizatio
 - `open_workspace` 不回传本机绝对路径（只回 basename）；git 失败只回通用错误，不转发 git stderr。
 - `search` 有时间、扫描文件数与单文件大小上限；打开的 workspace 数量有上限（LRU 淘汰）。
 - 两类错误分流：未知方法/工具、参数错误走 JSON-RPC error；路径逃逸、信任级别不足、文件缺失等走 `isError: true` 的正常结果。
+
+## 首次接入 ChatGPT Pro
+
+给第一次使用的人，或者给“不会操作浏览器、但能运行本地命令”的 agent，完整 runbook 见 [skills/codex-web-bridge/references/chatgpt-pro-mcp-setup.md](skills/codex-web-bridge/references/chatgpt-pro-mcp-setup.md)。这里是最短分工：
+
+- 本地 agent：确认当前 checkout 包含 `connector/`，运行测试，创建 `connector/connector.local.json`，把 `allowed_roots` 指向具体项目目录，启动 `python3 -m connector.server --config connector/connector.local.json`。
+- 本地 agent：用 Secure MCP Tunnel、ngrok 或 Cloudflare Tunnel 暴露 `http://127.0.0.1:8765`，把 `https://<tunnel-host>/mcp` 交给用户。公网隧道只适合短时测试；长期使用应走有认证的部署或官方安全隧道。
+- 用户：在 ChatGPT web 里打开 Settings -> Apps & Connectors / Apps / Connectors -> Advanced settings，启用 Developer mode；然后在 Connectors / Apps & Connectors 里 Create 一个 connector，填入 `/mcp` endpoint。
+- 验证：新开一个 ChatGPT 对话，选择这个 connector，让它先调用 `open_workspace`，再调用 `read README.md`。如果能返回 README 第一行标题和工具名，链路就跑通了。
+- 收尾：测试完成后关闭 tunnel 和本地 connector；不要长期保留 no-auth 公网隧道。
+
+注意：只安装 `skills/codex-web-bridge` 这个 Codex Skill，不等于安装了 MCP server。MCP server 在仓库根目录的 `connector/` 包里；其他 agent 如果不识别 Codex Skill，也仍然可以直接启动 `connector/` 作为通用 MCP server。
 
 ## 安装
 
@@ -177,6 +191,7 @@ skills/codex-web-bridge/
 ├── references/
 │   ├── providers.md
 │   ├── mcp-connector-mode.md
+│   ├── chatgpt-pro-mcp-setup.md
 │   └── response-capture.md
 └── scripts/
     ├── bridge_handoff.py

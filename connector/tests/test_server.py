@@ -46,7 +46,7 @@ class ServerE2ETests(unittest.TestCase):
 
     # --- helpers ------------------------------------------------------------
 
-    def _request(self, method, path="/rpc", body=None, headers=None):
+    def _request(self, method, path="/mcp", body=None, headers=None):
         conn = http.client.HTTPConnection("127.0.0.1", self.port, timeout=5)
         try:
             conn.request(method, path, body=body, headers=headers or {})
@@ -56,7 +56,10 @@ class ServerE2ETests(unittest.TestCase):
         finally:
             conn.close()
 
-    def _rpc(self, payload, *, token=TOKEN, origin=None, session=None, ctype="application/json"):
+    def _rpc(
+        self, payload, *, path="/mcp", token=TOKEN, origin=None,
+        session=None, ctype="application/json"
+    ):
         headers = {}
         if ctype is not None:
             headers["Content-Type"] = ctype
@@ -67,7 +70,7 @@ class ServerE2ETests(unittest.TestCase):
         if session is not None:
             headers["Mcp-Session-Id"] = session
         status, resp_headers, data = self._request(
-            "POST", body=json.dumps(payload), headers=headers
+            "POST", path=path, body=json.dumps(payload), headers=headers
         )
         parsed = json.loads(data) if data else None
         return status, resp_headers, parsed
@@ -125,6 +128,13 @@ class ServerE2ETests(unittest.TestCase):
             body="{}", headers={"Authorization": f"Bearer {TOKEN}", "Content-Type": "application/json"},
         )
         self.assertEqual(status, 404)
+
+    def test_legacy_rpc_path_still_works(self) -> None:
+        status, _, body = self._rpc(
+            {"jsonrpc": "2.0", "id": 1, "method": "ping"}, path="/rpc"
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["result"], {})
 
     def test_security_headers_present(self) -> None:
         _, headers, _ = self._rpc({"jsonrpc": "2.0", "id": 1, "method": "ping"})
