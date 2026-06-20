@@ -183,6 +183,7 @@ struct Config {
 #[derive(Parser)]
 #[command(name = "codex-connector")]
 #[command(about = "Rust MCP connector for codex-web-bridge")]
+#[command(version)]
 struct Cli {
     #[command(subcommand)]
     command: CommandKind,
