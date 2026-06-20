@@ -35,6 +35,10 @@
 新手配置和安全边界可以先看 [FAQ_ZH.md](FAQ_ZH.md) 和 [SECURITY.md](SECURITY.md)。
 
 <p align="center">
+  <img src="docs/assets/proxide-social-cover.png" alt="Chinese hand-drawn social cover: Proxide is not only for Codex; any Agent can connect to GPT Pro through Rust MCP and handoff." width="920">
+</p>
+
+<p align="center">
   <img src="docs/assets/proxide-bridge-map.svg" alt="Proxide connects any agent to GPT Pro and a local workspace through MCP, bridge, and handoff paths." width="920">
 </p>
 
