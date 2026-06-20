@@ -66,9 +66,10 @@ Implemented here:
   a new workspace id; readonly `list_worktrees` lists managed worktrees and
   returns fresh workspace ids for available worktrees.
 - PR lifecycle refresh foundation: explicit `trust_level=execute` exposes
-  `refresh_pull_request_status`, which uses `gh pr view` to refresh persisted
-  PR handoff summaries with remote state, merged flag, PR number, URL, title,
-  base branch, and draft flag.
+  `refresh_pull_request_status` and `refresh_pull_requests`, which use
+  `gh pr view` to refresh one or multiple persisted PR handoff summaries with
+  remote state, merged flag, PR number, URL, title, base branch, and draft
+  flag.
 - PR handoff visibility foundation: readonly `show_pull_requests` and
   `render_pull_requests` aggregate connector-created PR records and lifecycle
   status counts without reading PR body files or calling GitHub.
@@ -85,8 +86,8 @@ Still missing versus DevSpace:
   plans, file moves, unified-diff patching, review handoff widgets, and edit
   plan history cards, such as interactive approval controls.
 - Richer managed Git worktree workflows beyond create/list/cleanup/publish/task
-  metadata/PR handoff records and manual PR status refresh, such as continuous
-  PR review polling and richer PR lifecycle widgets.
+  metadata/PR handoff records and on-demand PR status refresh, such as
+  continuous PR review polling and richer PR lifecycle widgets.
 - Richer workspace state persistence beyond bounded session snapshots, audit
   logs, recoverable review notes/edit plans, worktree metadata, and PR handoff
   summaries.
@@ -225,6 +226,12 @@ Deliverables:
   PR handoff after review, close, or merge events. Status: implemented for
   execute mode through `gh pr view`; it updates connector state only and does
   not read PR body files.
+- `refresh_pull_requests` MCP tool so later agents can batch-refresh persisted
+  PR handoff records for an opened workspace after review, close, or merge
+  events. Status: implemented for execute mode through `gh pr view`; it uses
+  each persisted PR URL when available, falls back to branch, caps each call to
+  a small batch with `truncated=true` continuation signaling, updates connector
+  state only, and does not read PR body files.
 - `show_pull_requests` / `render_pull_requests` MCP tools so later agents can
   inspect connector-created PR lifecycle records and status counts without
   reading PR body files or calling GitHub. Status: implemented as readonly

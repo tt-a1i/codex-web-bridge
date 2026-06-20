@@ -56,6 +56,7 @@ const MAX_WORKTREES: usize = 128;
 const MAX_PERSISTED_SESSIONS: usize = 256;
 const MAX_PERSISTED_PULL_REQUESTS: usize = 256;
 const MAX_PERSISTED_EDIT_PLANS: usize = 256;
+const MAX_PULL_REQUEST_REFRESHES: usize = 5;
 const MAX_REVIEW_NOTES: usize = 1000;
 const MAX_SESSION_TOOL_CALLS: usize = 200;
 const MAX_SESSION_WORKSPACES: usize = 128;
@@ -65,6 +66,7 @@ const INSTRUCTION_SCAN_DEADLINE: Duration = Duration::from_secs(2);
 const GIT_TIMEOUT: Duration = Duration::from_secs(10);
 const GIT_PUSH_TIMEOUT: Duration = Duration::from_secs(60);
 const GH_TIMEOUT: Duration = Duration::from_secs(60);
+const GH_BATCH_TIMEOUT: Duration = Duration::from_secs(90);
 const SHELL_TIMEOUT: Duration = Duration::from_secs(10);
 const PRIMARY_ENDPOINT: &str = "/mcp";
 const LEGACY_ENDPOINT: &str = "/rpc";
@@ -412,6 +414,19 @@ struct PersistedPullRequest {
     exit_code: Option<i32>,
     #[serde(default)]
     body_chars: usize,
+}
+
+struct PullRequestRecordKey {
+    created_unix_ms: u128,
+    branch: String,
+    url: Option<String>,
+}
+
+struct PullRequestRefreshTarget<'a> {
+    selector: String,
+    requested_branch: Option<String>,
+    requested_url: Option<String>,
+    record_key: Option<&'a PullRequestRecordKey>,
 }
 
 fn default_pull_request_status() -> String {
@@ -2056,6 +2071,16 @@ fn required_tool_scope(tool: &str) -> Option<&'static str> {
         | "list_edit_plans"
         | "show_edit_plans"
         | "render_edit_plans" => Some("workspace:read"),
+        "write"
+        | "edit"
+        | "apply_patch"
+        | "move_path"
+        | "open_worktree"
+        | "publish_branch"
+        | "create_pull_request"
+        | "refresh_pull_request_status"
+        | "refresh_pull_requests" => Some("workspace:write"),
+        "shell" => Some("shell"),
         _ => None,
     }
 }
@@ -3097,6 +3122,69 @@ where
     Ok(pull_request)
 }
 
+fn update_persisted_pull_request_by_key<F>(
+    state: &AppState,
+    workspace_id: &str,
+    key: &PullRequestRecordKey,
+    update: F,
+) -> Result<PersistedPullRequest>
+where
+    F: FnOnce(&mut PersistedPullRequest) -> Result<()>,
+{
+    let Some(persisted) = &state.persisted_state else {
+        bail!("persisted state is not available for pull requests");
+    };
+    let Some(state_dir) = &state.config.state_dir else {
+        bail!("state_dir is required for pull request state");
+    };
+    let (snapshot, pull_request) = {
+        let mut guard = persisted.lock().unwrap();
+        let Some(idx) =
+            guard
+                .pull_requests
+                .iter()
+                .enumerate()
+                .rev()
+                .find_map(|(idx, pull_request)| {
+                    let workspace_matches = pull_request.workspace_id == workspace_id;
+                    let created_matches = pull_request.created_unix_ms == key.created_unix_ms;
+                    let branch_matches = pull_request.branch == key.branch;
+                    let url_matches = pull_request.url == key.url;
+                    (workspace_matches && created_matches && branch_matches && url_matches)
+                        .then_some(idx)
+                })
+        else {
+            bail!("pull request handoff record not found");
+        };
+        let pull_request = &mut guard.pull_requests[idx];
+        update(pull_request)?;
+        pull_request.updated_unix_ms = unix_ms();
+        let pull_request = pull_request.clone();
+        cap_persisted_state(&mut guard);
+        (guard.clone(), pull_request)
+    };
+    persist_state_snapshot(state_dir, &snapshot)?;
+    Ok(pull_request)
+}
+
+fn update_persisted_pull_request_for_refresh<F>(
+    state: &AppState,
+    workspace_id: &str,
+    record_key: Option<&PullRequestRecordKey>,
+    branch: Option<&str>,
+    url: Option<&str>,
+    update: F,
+) -> Result<PersistedPullRequest>
+where
+    F: FnOnce(&mut PersistedPullRequest) -> Result<()>,
+{
+    if let Some(record_key) = record_key {
+        update_persisted_pull_request_by_key(state, workspace_id, record_key, update)
+    } else {
+        update_persisted_pull_request(state, workspace_id, branch, url, update)
+    }
+}
+
 fn persisted_edit_plans(
     state_dir: &Path,
     workspace_id: Option<&str>,
@@ -3183,6 +3271,7 @@ fn recent_change_actions(
                         | "publish_branch"
                         | "create_pull_request"
                         | "refresh_pull_request_status"
+                        | "refresh_pull_requests"
                 )
             ) && call.get("workspace_id").and_then(Value::as_str) == Some(workspace_id)
         })
@@ -3369,6 +3458,14 @@ fn summarize_result(tool: &str, payload: &Value) -> Value {
             "stderr_chars": payload.get("stderr").and_then(Value::as_str).map(str::len).unwrap_or(0),
             "truncated": payload.get("truncated")
         }),
+        "refresh_pull_requests" => json!({
+            "workspace_id": payload.get("workspace_id"),
+            "branch": payload.get("branch"),
+            "refreshed": payload.get("refreshed").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
+            "succeeded": payload.get("succeeded"),
+            "failed": payload.get("failed"),
+            "truncated": payload.get("truncated")
+        }),
         "list_worktrees" => json!({
             "worktrees": payload.get("worktrees").and_then(Value::as_array).map(Vec::len).unwrap_or(0),
             "truncated": payload.get("truncated")
@@ -3549,6 +3646,14 @@ fn call_tool(
                 );
             }
             refresh_pull_request_status_tool(state, args)
+        }
+        "refresh_pull_requests" => {
+            if state.config.trust_level != TrustLevel::Execute {
+                return ToolOutcome::ToolError(
+                    "refresh_pull_requests requires trust_level=execute".to_string(),
+                );
+            }
+            refresh_pull_requests_tool(state, args)
         }
         _ => return ToolOutcome::ProtocolError(format!("unknown tool: {name}")),
     };
@@ -4954,36 +5059,179 @@ fn refresh_pull_request_status_tool_with_gh(
             .trim()
             .to_string()
     };
-    ensure_short_text("selector", &selector, 500)?;
+    refresh_pull_request_selector_with_gh(
+        state,
+        workspace_id,
+        &ws.root,
+        PullRequestRefreshTarget {
+            selector,
+            requested_branch,
+            requested_url,
+            record_key: None,
+        },
+        gh_bin,
+        GH_TIMEOUT,
+    )
+}
+
+fn refresh_pull_requests_tool(
+    state: &AppState,
+    args: &serde_json::Map<String, Value>,
+) -> Result<Value> {
+    refresh_pull_requests_tool_with_gh(state, args, "gh")
+}
+
+fn refresh_pull_requests_tool_with_gh(
+    state: &AppState,
+    args: &serde_json::Map<String, Value>,
+    gh_bin: &str,
+) -> Result<Value> {
+    let Some(state_dir) = &state.config.state_dir else {
+        bail!("state_dir is required for pull request state");
+    };
+    let workspace_id = required(args, "workspace_id")?;
+    ensure_short_text("workspace_id", workspace_id, 120)?;
+    let ws = workspace(state, workspace_id)?;
+    let branch = optional_short_text(args, "branch", 200)?;
+    let requested_limit =
+        optional_u64(args, "limit")?.unwrap_or(MAX_PULL_REQUEST_REFRESHES as u64) as usize;
+    let limit = requested_limit.min(MAX_PULL_REQUEST_REFRESHES);
+    let (pull_requests, truncated) =
+        persisted_pull_requests(state_dir, Some(workspace_id), branch.as_deref(), limit)?;
+    let mut refreshed = Vec::with_capacity(pull_requests.len());
+    let mut succeeded = 0usize;
+    let mut failed = 0usize;
+    let deadline = Instant::now() + GH_BATCH_TIMEOUT;
+    let mut deadline_reached = false;
+    for pull_request in pull_requests {
+        if Instant::now() >= deadline {
+            deadline_reached = true;
+            break;
+        }
+        let remaining = deadline.saturating_duration_since(Instant::now());
+        let requested_url = pull_request.url.clone();
+        let requested_branch = Some(pull_request.branch.clone());
+        let selector = requested_url
+            .clone()
+            .unwrap_or_else(|| pull_request.branch.clone());
+        let record_key = PullRequestRecordKey {
+            created_unix_ms: pull_request.created_unix_ms,
+            branch: pull_request.branch.clone(),
+            url: pull_request.url.clone(),
+        };
+        let result = refresh_pull_request_selector_with_gh(
+            state,
+            workspace_id,
+            &ws.root,
+            PullRequestRefreshTarget {
+                selector: selector.clone(),
+                requested_branch: requested_branch.clone(),
+                requested_url: requested_url.clone(),
+                record_key: Some(&record_key),
+            },
+            gh_bin,
+            remaining.min(GH_TIMEOUT),
+        )
+        .unwrap_or_else(|err| {
+            let match_branch = requested_url
+                .is_none()
+                .then_some(pull_request.branch.as_str());
+            let match_url = requested_url.as_deref();
+            let updated = update_persisted_pull_request_for_refresh(
+                state,
+                workspace_id,
+                Some(&record_key),
+                match_branch,
+                match_url,
+                |record| {
+                    record.status = "refresh_failed".to_string();
+                    record.remote_state = None;
+                    record.merged = None;
+                    record.number = None;
+                    record.exit_code = None;
+                    Ok(())
+                },
+            )
+            .ok();
+            json!({
+                "success": false,
+                "selector": selector,
+                "exit_code": Value::Null,
+                "timed_out": false,
+                "stdout": "",
+                "stderr": truncate_string(&err.to_string(), MAX_SHELL_OUTPUT_BYTES),
+                "truncated": false,
+                "pull_request": updated,
+            })
+        });
+        if result
+            .get("success")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            succeeded += 1;
+        } else {
+            failed += 1;
+        }
+        refreshed.push(result);
+    }
+    Ok(json!({
+        "workspace_id": workspace_id,
+        "branch": branch,
+        "refreshed": refreshed,
+        "succeeded": succeeded,
+        "failed": failed,
+        "truncated": truncated || deadline_reached
+    }))
+}
+
+fn refresh_pull_request_selector_with_gh(
+    state: &AppState,
+    workspace_id: &str,
+    root: &Path,
+    target: PullRequestRefreshTarget<'_>,
+    gh_bin: &str,
+    timeout: Duration,
+) -> Result<Value> {
+    ensure_short_text("selector", &target.selector, 500)?;
     let gh_args = vec![
         "pr".to_string(),
         "view".to_string(),
-        selector.clone(),
+        target.selector.clone(),
         "--json".to_string(),
         "state,merged,url,number,title,baseRefName,headRefName,isDraft".to_string(),
     ];
-    let output = command_with_output(gh_bin, &gh_args, &ws.root, GH_TIMEOUT)
+    let output = command_with_output(gh_bin, &gh_args, root, timeout)
         .with_context(|| "failed to run gh pr view")?;
     let stdout_raw = String::from_utf8_lossy(&output.stdout).to_string();
     let stdout = scrub_git_output(&stdout_raw);
     let stderr = scrub_git_output(&String::from_utf8_lossy(&output.stderr));
     let success = output.exit_code == Some(0) && !output.timed_out;
     if !success {
-        let match_branch = requested_url.is_none().then_some(selector.as_str());
-        let match_url = requested_url.as_deref();
-        let pull_request =
-            update_persisted_pull_request(state, workspace_id, match_branch, match_url, |record| {
+        let match_branch = target
+            .requested_url
+            .is_none()
+            .then_some(target.selector.as_str());
+        let match_url = target.requested_url.as_deref();
+        let pull_request = update_persisted_pull_request_for_refresh(
+            state,
+            workspace_id,
+            target.record_key,
+            match_branch,
+            match_url,
+            |record| {
                 record.status = "refresh_failed".to_string();
                 record.remote_state = None;
                 record.merged = None;
                 record.number = None;
                 record.exit_code = output.exit_code;
                 Ok(())
-            })
-            .ok();
+            },
+        )
+        .ok();
         return Ok(json!({
             "success": false,
-            "selector": selector,
+            "selector": target.selector,
             "exit_code": output.exit_code,
             "timed_out": output.timed_out,
             "stdout": stdout,
@@ -5011,13 +5259,13 @@ fn refresh_pull_request_status_tool_with_gh(
         .get("headRefName")
         .and_then(Value::as_str)
         .map(|value| truncate_string(value, 200))
-        .or(requested_branch.clone())
-        .unwrap_or_else(|| selector.clone());
+        .or(target.requested_branch.clone())
+        .unwrap_or_else(|| target.selector.clone());
     let refreshed_url = view
         .get("url")
         .and_then(Value::as_str)
         .map(|value| truncate_string(value, 500))
-        .or(requested_url.clone());
+        .or(target.requested_url.clone());
     let number = view.get("number").and_then(Value::as_u64);
     let title = view
         .get("title")
@@ -5028,11 +5276,15 @@ fn refresh_pull_request_status_tool_with_gh(
         .and_then(Value::as_str)
         .map(|value| truncate_string(value, 200));
     let draft = view.get("isDraft").and_then(Value::as_bool);
-    let match_branch = requested_url.is_none().then_some(head_branch.as_str());
-    let match_url = requested_url.as_deref();
-    let pull_request = update_persisted_pull_request(
+    let match_branch = target
+        .requested_url
+        .is_none()
+        .then_some(head_branch.as_str());
+    let match_url = target.requested_url.as_deref();
+    let pull_request = update_persisted_pull_request_for_refresh(
         state,
         workspace_id,
+        target.record_key,
         match_branch,
         match_url,
         |pull_request| {
@@ -5059,7 +5311,7 @@ fn refresh_pull_request_status_tool_with_gh(
     )?;
     Ok(json!({
         "success": true,
-        "selector": selector,
+        "selector": target.selector,
         "exit_code": output.exit_code,
         "timed_out": output.timed_out,
         "stdout": stdout,
@@ -6130,6 +6382,7 @@ fn tool_names(trust_level: TrustLevel) -> Vec<&'static str> {
             "publish_branch",
             "create_pull_request",
             "refresh_pull_request_status",
+            "refresh_pull_requests",
         ]);
     }
     tools
@@ -6321,6 +6574,14 @@ fn tool_definition(name: &str) -> Option<Value> {
             json!({"type":"object","properties":{"workspace_id":{"type":"string"},"branch":{"type":"string","description":"Optional PR head branch. Defaults to the current workspace branch."},"url":{"type":"string","description":"Optional GitHub PR URL selector. If provided, it is used instead of branch."}},"required":["workspace_id"]}),
             json!({"type":"object","properties":{"success":{"type":"boolean"},"selector":{"type":"string"},"exit_code":{"type":["integer","null"]},"timed_out":{"type":"boolean"},"stdout":{"type":"string"},"stderr":{"type":"string"},"truncated":{"type":"boolean"},"pull_request":{"type":["object","null"],"properties":{"created_unix_ms":{"type":"integer"},"updated_unix_ms":{"type":"integer"},"session_id":{"type":"string"},"workspace_id":{"type":"string"},"branch":{"type":"string"},"base":{"type":"string"},"title":{"type":"string"},"draft":{"type":"boolean"},"status":{"type":"string"},"url":{"type":"string"},"number":{"type":"integer"},"remote_state":{"type":"string"},"merged":{"type":"boolean"},"exit_code":{"type":"integer"},"body_chars":{"type":"integer"}},"required":["created_unix_ms","updated_unix_ms","workspace_id","branch","title","draft","status","body_chars"],"additionalProperties":false}},"required":["success","selector","exit_code","timed_out","stdout","stderr","truncated","pull_request"],"additionalProperties":false}),
         ),
+        "refresh_pull_requests" =>
+        network_tool_def(
+            "refresh_pull_requests",
+            "Refresh Pull Requests",
+            "Refresh multiple persisted pull request handoff records for an opened workspace from GitHub with gh pr view. Uses each record's PR URL when available, falls back to branch, and updates connector state only. Execute trust is required.",
+            json!({"type":"object","properties":{"workspace_id":{"type":"string"},"branch":{"type":"string","description":"Optional PR head branch filter."},"limit":{"type":"integer","description":"Maximum records to refresh (default 5, capped at 5)."}},"required":["workspace_id"]}),
+            refresh_pull_requests_output_schema(),
+        ),
         "list_skills" =>
         tool_def(
             "list_skills",
@@ -6411,6 +6672,10 @@ fn review_handoff_output_schema() -> Value {
 
 fn pull_requests_handoff_output_schema() -> Value {
     json!({"type":"object","properties":{"workspace_id":{"type":["string","null"]},"branch":{"type":["string","null"]},"pull_requests":{"type":"array","items":{"type":"object","properties":{"created_unix_ms":{"type":"integer"},"updated_unix_ms":{"type":"integer"},"session_id":{"type":"string"},"workspace_id":{"type":"string"},"branch":{"type":"string"},"base":{"type":"string"},"title":{"type":"string"},"draft":{"type":"boolean"},"status":{"type":"string"},"url":{"type":"string"},"number":{"type":"integer"},"remote_state":{"type":"string"},"merged":{"type":"boolean"},"exit_code":{"type":"integer"},"body_chars":{"type":"integer"}},"required":["created_unix_ms","updated_unix_ms","workspace_id","branch","title","draft","status","body_chars"],"additionalProperties":false}},"status_counts":{"type":"object","additionalProperties":{"type":"integer"}},"truncated":{"type":"boolean"}},"required":["workspace_id","branch","pull_requests","status_counts","truncated"],"additionalProperties":false})
+}
+
+fn refresh_pull_requests_output_schema() -> Value {
+    json!({"type":"object","properties":{"workspace_id":{"type":"string"},"branch":{"type":["string","null"]},"refreshed":{"type":"array","items":{"type":"object","properties":{"success":{"type":"boolean"},"selector":{"type":"string"},"exit_code":{"type":["integer","null"]},"timed_out":{"type":"boolean"},"stdout":{"type":"string"},"stderr":{"type":"string"},"truncated":{"type":"boolean"},"pull_request":{"type":["object","null"],"properties":{"created_unix_ms":{"type":"integer"},"updated_unix_ms":{"type":"integer"},"session_id":{"type":"string"},"workspace_id":{"type":"string"},"branch":{"type":"string"},"base":{"type":"string"},"title":{"type":"string"},"draft":{"type":"boolean"},"status":{"type":"string"},"url":{"type":"string"},"number":{"type":"integer"},"remote_state":{"type":"string"},"merged":{"type":"boolean"},"exit_code":{"type":"integer"},"body_chars":{"type":"integer"}},"required":["created_unix_ms","updated_unix_ms","workspace_id","branch","title","draft","status","body_chars"],"additionalProperties":false}},"required":["success","selector","exit_code","timed_out","stdout","stderr","truncated","pull_request"],"additionalProperties":false}},"succeeded":{"type":"integer"},"failed":{"type":"integer"},"truncated":{"type":"boolean"}},"required":["workspace_id","branch","refreshed","succeeded","failed","truncated"],"additionalProperties":false})
 }
 
 fn edit_plans_handoff_output_schema() -> Value {
@@ -7165,6 +7430,7 @@ mod tests {
         assert!(names.contains("publish_branch"));
         assert!(names.contains("create_pull_request"));
         assert!(names.contains("refresh_pull_request_status"));
+        assert!(names.contains("refresh_pull_requests"));
         assert!(names.contains("create_note"));
         assert!(names.contains("create_edit_plan"));
         assert!(names.contains("update_edit_plan_status"));
@@ -7199,6 +7465,31 @@ mod tests {
         assert_eq!(refresh["annotations"]["readOnlyHint"], false);
         assert_eq!(refresh["annotations"]["destructiveHint"], false);
         assert_eq!(refresh["annotations"]["openWorldHint"], true);
+        let refresh_many = tools
+            .iter()
+            .find(|tool| tool["name"] == "refresh_pull_requests")
+            .unwrap();
+        assert_eq!(refresh_many["annotations"]["readOnlyHint"], false);
+        assert_eq!(refresh_many["annotations"]["destructiveHint"], false);
+        assert_eq!(refresh_many["annotations"]["openWorldHint"], true);
+    }
+
+    #[test]
+    fn execute_tools_require_oauth_execute_scopes() {
+        for tool in [
+            "write",
+            "edit",
+            "apply_patch",
+            "move_path",
+            "open_worktree",
+            "publish_branch",
+            "create_pull_request",
+            "refresh_pull_request_status",
+            "refresh_pull_requests",
+        ] {
+            assert_eq!(required_tool_scope(tool), Some("workspace:write"), "{tool}");
+        }
+        assert_eq!(required_tool_scope("shell"), Some("shell"));
     }
 
     #[test]
@@ -8581,6 +8872,255 @@ mod tests {
     }
 
     #[test]
+    fn refresh_pull_requests_batch_updates_persisted_handoff_records() {
+        let root = temp_project();
+        let state_dir = temp_project();
+        let fake_dir = temp_project();
+        let args_file = fake_dir.join("args.txt");
+        let fake_gh = fake_dir.join("gh");
+        init_git_repo(&root);
+        fs::write(
+            &fake_gh,
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" >> '{}'
+case "$3" in
+  *pull/21*)
+    printf '%s\n' '{{"state":"OPEN","merged":false,"url":"https://github.com/example/repo/pull/21","number":21,"title":"Batch Open","baseRefName":"main","headRefName":"codex/pr-batch-open","isDraft":true}}'
+    ;;
+  *pull/22*)
+    printf '%s\n' '{{"state":"CLOSED","merged":true,"url":"https://github.com/example/repo/pull/22","number":22,"title":"Batch Merged","baseRefName":"main","headRefName":"codex/pr-batch-merged","isDraft":false}}'
+    ;;
+  *)
+    echo 'not found' >&2
+    exit 1
+    ;;
+esac
+"#,
+                args_file.display()
+            ),
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&fake_gh).unwrap().permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+            fs::set_permissions(&fake_gh, permissions).unwrap();
+        }
+
+        let mut raw = raw_config(root.clone());
+        raw.trust_level = TrustLevel::Execute;
+        raw.state_dir = Some(state_dir.clone());
+        let config = validate_raw(raw).unwrap();
+        let state = build_state(config).unwrap();
+        let opened = open_workspace(&state, root.to_str().unwrap()).unwrap();
+        let workspace_id = opened["workspace_id"].as_str().unwrap().to_string();
+        let create_args =
+            serde_json::Map::from_iter([("workspace_id".to_string(), json!(workspace_id))]);
+        for payload in [
+            json!({
+                "branch": "codex/pr-batch-open",
+                "base": "main",
+                "title": "Initial Open",
+                "draft": false,
+                "exit_code": 0,
+                "success": true,
+                "timed_out": false,
+                "url": "https://github.com/example/repo/pull/21",
+                "body_chars": 21,
+                "stdout": "https://github.com/example/repo/pull/21",
+                "stderr": "",
+                "truncated": false
+            }),
+            json!({
+                "branch": "codex/pr-batch-open",
+                "base": "main",
+                "title": "Duplicate Open",
+                "draft": false,
+                "exit_code": 0,
+                "success": true,
+                "timed_out": false,
+                "url": "https://github.com/example/repo/pull/21",
+                "body_chars": 23,
+                "stdout": "https://github.com/example/repo/pull/21",
+                "stderr": "",
+                "truncated": false
+            }),
+            json!({
+                "branch": "codex/pr-batch-merged",
+                "base": "main",
+                "title": "Initial Merged",
+                "draft": true,
+                "exit_code": 0,
+                "success": true,
+                "timed_out": false,
+                "url": "https://github.com/example/repo/pull/22",
+                "body_chars": 22,
+                "stdout": "https://github.com/example/repo/pull/22",
+                "stderr": "",
+                "truncated": false
+            }),
+            json!({
+                "branch": "codex/pr-batch-fails",
+                "base": "main",
+                "title": "Initial Fails",
+                "draft": false,
+                "exit_code": 0,
+                "success": true,
+                "timed_out": false,
+                "url": "https://github.com/example/repo/pull/23",
+                "body_chars": 23,
+                "stdout": "https://github.com/example/repo/pull/23",
+                "stderr": "",
+                "truncated": false
+            }),
+        ] {
+            record_pull_request_from_tool_result(
+                &state,
+                Some("sid_pr_batch_refresh"),
+                "create_pull_request",
+                &create_args,
+                &payload,
+            );
+            thread::sleep(Duration::from_millis(2));
+        }
+
+        let refreshed = refresh_pull_requests_tool_with_gh(
+            &state,
+            &serde_json::Map::from_iter([
+                (
+                    "workspace_id".to_string(),
+                    json!(create_args["workspace_id"].as_str().unwrap()),
+                ),
+                ("limit".to_string(), json!(10)),
+            ]),
+            fake_gh.to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(refreshed["succeeded"], 3);
+        assert_eq!(refreshed["failed"], 1);
+        assert_eq!(refreshed["refreshed"].as_array().unwrap().len(), 4);
+        let args = fs::read_to_string(args_file).unwrap();
+        assert!(args.contains("pr\nview\nhttps://github.com/example/repo/pull/21\n--json"));
+        assert!(args.contains("pr\nview\nhttps://github.com/example/repo/pull/22\n--json"));
+        assert!(args.contains("pr\nview\nhttps://github.com/example/repo/pull/23\n--json"));
+
+        let listed = list_pull_requests_tool(
+            &state,
+            &serde_json::Map::from_iter([(
+                "workspace_id".to_string(),
+                json!(create_args["workspace_id"].as_str().unwrap()),
+            )]),
+        )
+        .unwrap();
+        let pull_requests = listed["pull_requests"].as_array().unwrap();
+        let open_records = pull_requests
+            .iter()
+            .filter(|pull_request| pull_request["branch"].as_str() == Some("codex/pr-batch-open"))
+            .collect::<Vec<_>>();
+        let merged = pull_requests
+            .iter()
+            .find(|pull_request| pull_request["branch"].as_str() == Some("codex/pr-batch-merged"))
+            .unwrap();
+        let failed = pull_requests
+            .iter()
+            .find(|pull_request| pull_request["branch"].as_str() == Some("codex/pr-batch-fails"))
+            .unwrap();
+        assert_eq!(open_records.len(), 2);
+        for open in open_records {
+            assert_eq!(open["status"], "open");
+            assert_eq!(open["draft"], true);
+            assert_eq!(open["number"], 21);
+        }
+        assert_eq!(merged["status"], "merged");
+        assert_eq!(merged["merged"], true);
+        assert_eq!(merged["number"], 22);
+        assert_eq!(failed["status"], "refresh_failed");
+        assert_eq!(failed["remote_state"], Value::Null);
+        let raw_state = fs::read_to_string(state_dir.join("workspace_state.json")).unwrap();
+        assert!(!raw_state.contains("secret pr body"));
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(state_dir).unwrap();
+        fs::remove_dir_all(fake_dir).unwrap();
+    }
+
+    #[test]
+    fn refresh_pull_requests_caps_batch_size_and_marks_truncated() {
+        let root = temp_project();
+        let state_dir = temp_project();
+        let fake_dir = temp_project();
+        let fake_gh = fake_dir.join("gh");
+        init_git_repo(&root);
+        fs::write(
+            &fake_gh,
+            "#!/bin/sh\nprintf '%s\\n' '{\"state\":\"OPEN\",\"merged\":false,\"url\":\"https://github.com/example/repo/pull/99\",\"number\":99,\"title\":\"Limit PR\",\"baseRefName\":\"main\",\"headRefName\":\"codex/pr-limit\",\"isDraft\":false}'\n",
+        )
+        .unwrap();
+        #[cfg(unix)]
+        {
+            let mut permissions = fs::metadata(&fake_gh).unwrap().permissions();
+            std::os::unix::fs::PermissionsExt::set_mode(&mut permissions, 0o755);
+            fs::set_permissions(&fake_gh, permissions).unwrap();
+        }
+
+        let mut raw = raw_config(root.clone());
+        raw.trust_level = TrustLevel::Execute;
+        raw.state_dir = Some(state_dir.clone());
+        let config = validate_raw(raw).unwrap();
+        let state = build_state(config).unwrap();
+        let opened = open_workspace(&state, root.to_str().unwrap()).unwrap();
+        let workspace_id = opened["workspace_id"].as_str().unwrap().to_string();
+        let create_args =
+            serde_json::Map::from_iter([("workspace_id".to_string(), json!(workspace_id))]);
+        for idx in 0..6 {
+            let payload = json!({
+                "branch": format!("codex/pr-limit-{idx}"),
+                "base": "main",
+                "title": format!("Limit {idx}"),
+                "draft": false,
+                "exit_code": 0,
+                "success": true,
+                "timed_out": false,
+                "url": format!("https://github.com/example/repo/pull/limit-{idx}"),
+                "body_chars": 10,
+                "stdout": format!("https://github.com/example/repo/pull/limit-{idx}"),
+                "stderr": "",
+                "truncated": false
+            });
+            record_pull_request_from_tool_result(
+                &state,
+                Some("sid_pr_limit_refresh"),
+                "create_pull_request",
+                &create_args,
+                &payload,
+            );
+            thread::sleep(Duration::from_millis(2));
+        }
+
+        let refreshed = refresh_pull_requests_tool_with_gh(
+            &state,
+            &serde_json::Map::from_iter([
+                (
+                    "workspace_id".to_string(),
+                    json!(create_args["workspace_id"].as_str().unwrap()),
+                ),
+                ("limit".to_string(), json!(10)),
+            ]),
+            fake_gh.to_str().unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            refreshed["refreshed"].as_array().unwrap().len(),
+            MAX_PULL_REQUEST_REFRESHES
+        );
+        assert_eq!(refreshed["succeeded"], MAX_PULL_REQUEST_REFRESHES);
+        assert_eq!(refreshed["truncated"], true);
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(state_dir).unwrap();
+        fs::remove_dir_all(fake_dir).unwrap();
+    }
+
+    #[test]
     fn refresh_pull_request_status_can_match_handoff_by_url() {
         let root = temp_project();
         let state_dir = temp_project();
@@ -9614,6 +10154,84 @@ mod tests {
         let stored = fs::read_to_string(state_dir.join("oauth_tokens.json")).unwrap();
         assert!(stored.contains("chatgpt-test"));
         assert!(!root.join("oauth_tokens.json").exists());
+
+        server.abort();
+        fs::remove_dir_all(root).unwrap();
+        fs::remove_dir_all(state_dir).unwrap();
+    }
+
+    #[tokio::test]
+    async fn oauth_read_scope_cannot_call_execute_tools() {
+        let root = temp_project();
+        let state_dir = temp_project();
+        init_git_repo(&root);
+        let mut raw = raw_config(root.clone());
+        raw.trust_level = TrustLevel::Execute;
+        raw.public_base_url = Some("https://bridge.example".to_string());
+        raw.state_dir = Some(state_dir.clone());
+        let config = validate_raw(raw).unwrap();
+        let state = build_state(config).unwrap();
+        let app = build_router(state.clone());
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let now = unix_ms();
+        state
+            .oauth
+            .as_ref()
+            .unwrap()
+            .tokens
+            .lock()
+            .unwrap()
+            .tokens
+            .push(StoredOAuthToken {
+                access_token: "read-only-token".to_string(),
+                refresh_token: "read-only-refresh".to_string(),
+                client_id: "read-only-client".to_string(),
+                scope: "workspace:read".to_string(),
+                resource: Some("https://bridge.example/mcp".to_string()),
+                issued_at_unix_ms: now,
+                expires_at_unix_ms: now + OAUTH_ACCESS_TOKEN_TTL_MS,
+                refresh_expires_at_unix_ms: now + OAUTH_REFRESH_TOKEN_TTL_MS,
+            });
+        let init_body =
+            json!({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18"}})
+                .to_string();
+        let init = raw_http(
+            addr,
+            format!(
+                "POST /mcp HTTP/1.1\r\nHost: bridge.example\r\nContent-Type: application/json\r\nAuthorization: Bearer read-only-token\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                init_body.len(),
+                init_body
+            ),
+        )
+        .await;
+        assert_eq!(http_status(&init), 200);
+        let session_id = header_value(&init, "Mcp-Session-Id").unwrap();
+        for (tool, required_scope) in [
+            ("refresh_pull_requests", "workspace:write"),
+            ("shell", "shell"),
+        ] {
+            let body = json!({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":tool,"arguments":{"workspace_id":"workspace-any","command":"pwd"}}})
+                .to_string();
+            let response = raw_http(
+                addr,
+                format!(
+                    "POST /mcp HTTP/1.1\r\nHost: bridge.example\r\nContent-Type: application/json\r\nAuthorization: Bearer read-only-token\r\nMcp-Session-Id: {session_id}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                ),
+            )
+            .await;
+            let response_json: Value = serde_json::from_str(http_body(&response)).unwrap();
+            assert_eq!(response_json["error"]["code"], -32003, "{tool}");
+            assert!(response_json["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains(required_scope));
+        }
 
         server.abort();
         fs::remove_dir_all(root).unwrap();

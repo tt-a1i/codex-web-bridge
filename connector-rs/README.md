@@ -116,7 +116,8 @@ available for local/self-managed MCP clients that send
 Requested OAuth scopes are validated against the connector trust level. Empty
 OAuth scope requests default to the supported scopes, and review handoff tools
 that return note bodies or edit plan intent require `workspace:read` unless the
-caller uses the local owner token.
+caller uses the local owner token. Execute file, Git, worktree, and PR tools
+require `workspace:write`; the shell tool requires the separate `shell` scope.
 
 ## Current Tool Surface
 
@@ -250,6 +251,7 @@ plus:
 - `publish_branch`
 - `create_pull_request`
 - `refresh_pull_request_status`
+- `refresh_pull_requests`
 
 `apply_patch` accepts bounded unified diffs for existing, added, and deleted
 UTF-8 files under the workspace. Added files must target an existing
@@ -271,7 +273,11 @@ upstream tracking; it does not commit changes, change remotes, or create pull
 requests. `create_pull_request` uses the GitHub CLI (`gh pr create`) to create
 a PR for the current branch after writing the PR body under connector state; it
 does not commit or publish the branch itself. `refresh_pull_request_status`
-uses the GitHub CLI (`gh pr view`) to refresh a persisted PR handoff after
-review, merge, or close events; it updates connector state only and does not
-change workspace files. Richer audit widgets and continuous PR polling are
-planned in `docs/devspace-parity-roadmap.md`.
+uses the GitHub CLI (`gh pr view`) to refresh one persisted PR handoff after
+review, merge, or close events. `refresh_pull_requests` refreshes multiple
+persisted PR handoffs for an opened workspace in one call, using each record's
+PR URL when available and falling back to its branch. Batch refresh is capped
+at five records per call and returns `truncated=true` when another small batch
+should be requested. Both tools update
+connector state only and do not change workspace files. Richer audit widgets
+and continuous PR polling are planned in `docs/devspace-parity-roadmap.md`.
