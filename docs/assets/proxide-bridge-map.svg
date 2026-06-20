@@ -1,0 +1,67 @@
+<svg width="1200" height="760" viewBox="0 0 1200 760" fill="none" xmlns="http://www.w3.org/2000/svg" role="img" aria-labelledby="title desc">
+  <title id="title">Proxide hand drawn any-agent bridge</title>
+  <desc id="desc">A hand drawn whiteboard diagram showing that any agent can reach GPT Pro through Proxide by MCP, browser bridge, or endpoint handoff.</desc>
+  <rect width="1200" height="760" rx="30" fill="#FBF6EA"/>
+  <g opacity="0.35" stroke="#E6DCC8" stroke-width="1">
+    <path d="M70 130H1130M70 190H1130M70 250H1130M70 310H1130M70 370H1130M70 430H1130M70 490H1130M70 550H1130M70 610H1130"/>
+    <path d="M150 70V690M300 70V690M450 70V690M600 70V690M750 70V690M900 70V690M1050 70V690"/>
+  </g>
+
+  <text x="74" y="92" fill="#183C37" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="38" font-weight="800">Proxide: any Agent can borrow GPT Pro</text>
+  <path d="M72 112C210 121 381 110 536 116C660 121 807 111 930 117" stroke="#C58A3A" stroke-width="5" stroke-linecap="round"/>
+
+  <g transform="translate(74 166)">
+    <path d="M10 4C85 -3 208 0 276 8C288 40 292 190 276 226C190 234 82 232 10 224C-6 160 -4 63 10 4Z" fill="#FFFDF8" stroke="#183C37" stroke-width="3"/>
+    <text x="34" y="48" fill="#183C37" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="25" font-weight="800">Any local Agent</text>
+    <text x="34" y="88" fill="#5E6D68" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="21">Codex</text>
+    <text x="34" y="123" fill="#5E6D68" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="21">Claude Code</text>
+    <text x="34" y="158" fill="#5E6D68" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="21">Cursor / Cline</text>
+    <text x="34" y="193" fill="#5E6D68" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="21">custom scripts</text>
+  </g>
+
+  <g transform="translate(452 138)">
+    <path d="M28 8C110 0 274 4 342 16C365 74 354 313 340 378C254 394 103 388 27 376C0 294 2 83 28 8Z" fill="#EAF3ED" stroke="#183C37" stroke-width="4"/>
+    <text x="95" y="64" fill="#183C37" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="38" font-weight="900">Proxide</text>
+    <path d="M76 92C133 104 230 102 286 92" stroke="#C58A3A" stroke-width="4" stroke-linecap="round"/>
+
+    <path d="M70 132C137 124 242 126 302 135C308 166 305 190 298 214C226 222 132 222 72 214C61 188 62 154 70 132Z" fill="#FFF8E8" stroke="#183C37" stroke-width="2.5"/>
+    <text x="116" y="181" fill="#183C37" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="25" font-weight="800">MCP endpoint</text>
+
+    <path d="M70 232C143 222 246 228 302 238C310 267 304 294 296 316C227 322 126 322 72 314C62 287 61 258 70 232Z" fill="#FFFDF8" stroke="#183C37" stroke-width="2.5"/>
+    <text x="120" y="280" fill="#183C37" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="25" font-weight="800">browser bridge</text>
+
+    <text x="72" y="356" fill="#5E6D68" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="21">handoff · audit · approval</text>
+  </g>
+
+  <g transform="translate(884 166)">
+    <path d="M8 8C70 -4 210 0 276 10C292 67 290 176 276 226C196 238 84 234 10 226C-8 164 -4 55 8 8Z" fill="#FFFDF8" stroke="#183C37" stroke-width="3"/>
+    <text x="42" y="58" fill="#183C37" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="27" font-weight="900">GPT Pro</text>
+    <text x="42" y="99" fill="#5E6D68" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="21">read repo</text>
+    <text x="42" y="133" fill="#5E6D68" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="21">review changes</text>
+    <text x="42" y="167" fill="#5E6D68" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="21">write edit plans</text>
+  </g>
+
+  <g transform="translate(884 448)">
+    <path d="M8 8C72 -4 216 0 278 12C292 52 289 126 276 162C203 174 82 171 10 164C-7 122 -4 49 8 8Z" fill="#FFF8E8" stroke="#183C37" stroke-width="3"/>
+    <text x="42" y="58" fill="#183C37" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="27" font-weight="900">local workspace</text>
+    <text x="42" y="101" fill="#5E6D68" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="21">files · git · skills · state</text>
+  </g>
+
+  <g stroke="#C58A3A" stroke-width="4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M354 250C392 238 424 235 480 245"/>
+    <path d="M354 334C398 352 428 354 480 330"/>
+    <path d="M794 264C824 244 845 242 890 248"/>
+    <path d="M794 402C834 470 858 506 892 526"/>
+  </g>
+  <g fill="#C58A3A">
+    <path d="M476 236L493 247L474 254Z"/>
+    <path d="M476 320L493 330L476 340Z"/>
+    <path d="M884 239L902 248L884 258Z"/>
+    <path d="M884 517L902 529L882 536Z"/>
+  </g>
+
+  <g transform="translate(88 620)">
+    <path d="M8 4C263 -5 836 0 1014 10C1024 36 1020 70 1010 92C760 104 230 101 12 92C-2 65 -3 28 8 4Z" fill="#EAF3ED" stroke="#C58A3A" stroke-width="2.5"/>
+    <text x="34" y="58" fill="#183C37" font-family="Bradley Hand, Comic Sans MS, PingFang SC, Microsoft YaHei, sans-serif" font-size="24" font-weight="800">Default path: readonly → handoff → execute with intent</text>
+  </g>
+</svg>

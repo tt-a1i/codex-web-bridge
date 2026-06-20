@@ -34,6 +34,10 @@
 
 新手配置和安全边界可以先看 [FAQ_ZH.md](FAQ_ZH.md) 和 [SECURITY.md](SECURITY.md)。
 
+<p align="center">
+  <img src="docs/assets/proxide-bridge-map.svg" alt="Proxide connects any agent to GPT Pro and a local workspace through MCP, bridge, and handoff paths." width="920">
+</p>
+
 ## 一眼看懂
 
 | 使用者状态 | 推荐路径 | 能得到什么 |
@@ -43,18 +47,6 @@
 | Agent 不能操作浏览器 | Local MCP endpoint handoff | 把 `/mcp` endpoint 交给网页端 GPT Pro，不需要本地 Agent 控浏览器 |
 | 第一次接入 ChatGPT Pro | Release installer + `doctor` + setup runbook | 可复制的安装、诊断、OAuth 授权和 smoke test 流程 |
 | 团队担心安全边界 | readonly/review/execute + tool/write/shell modes | 从只读、handoff 到 scoped execution 的渐进式授权 |
-
-```mermaid
-flowchart LR
-  A["Any Agent or User"] --> B{"Can expose local MCP?"}
-  B -- "yes" --> C["Rust MCP Connector"]
-  C --> D["ChatGPT Pro / MCP host"]
-  D --> E["read / search / review / handoff / execute"]
-  B -- "no" --> F["Bridge Mode"]
-  F --> G["scrubbed context packet"]
-  G --> D
-  E --> H["local audit + session state"]
-```
 
 ## 快速开始
 
@@ -106,6 +98,10 @@ Proxide 吸收了两个相邻方向的优点：[Waishnav/devspace](https://githu
 | `readonly` connector | `open_workspace`、`read`、`search`、`list`、`git_status`、`git_diff`、`preview_patch` | 否 | 第一次接入、只读审查、低风险远程上下文 |
 | `review` / `handoff` | `create_note`、`create_edit_plan`、`update_edit_plan_status`、`render_review`、`render_edit_plans` | 不改源码 | GPT Pro 写计划，本地 Agent 执行 |
 | `execute` connector | `write`、`edit`、`apply_patch`、`move_path`、safe/full `shell`、worktree、publish、PR handoff | 是，受 allowed roots 和 mode 约束 | 授权后的真实编码闭环 |
+
+<p align="center">
+  <img src="docs/assets/proxide-trust-layers.svg" alt="Proxide exposes readonly, review handoff, and execute layers with tool, write, and shell modes." width="920">
+</p>
 
 ## 功能边界
 
