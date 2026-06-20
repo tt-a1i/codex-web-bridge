@@ -61,8 +61,6 @@ jobs:
         include:
           - name: linux-x86_64
             os: ubuntu-latest
-          - name: darwin-x86_64
-            os: macos-13
           - name: darwin-aarch64
             os: macos-14
     steps:
@@ -160,8 +158,8 @@ jobs:
         run: |
           set -euo pipefail
           ls -la release-assets
-          test "$(find release-assets -maxdepth 1 -name 'codex-web-bridge-connector-*.tar.gz' | wc -l | tr -d ' ')" -ge 3
-          test "$(find release-assets -maxdepth 1 -name 'codex-web-bridge-connector-*.tar.gz.sha256' | wc -l | tr -d ' ')" -ge 3
+          test "$(find release-assets -maxdepth 1 -name 'codex-web-bridge-connector-*.tar.gz' | wc -l | tr -d ' ')" -ge 2
+          test "$(find release-assets -maxdepth 1 -name 'codex-web-bridge-connector-*.tar.gz.sha256' | wc -l | tr -d ' ')" -ge 2
 
       - name: Create or update release
         env:

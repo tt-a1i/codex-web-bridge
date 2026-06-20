@@ -119,7 +119,7 @@ GitHub Release 发布后，用户可以直接安装 connector：
 curl -fsSL https://raw.githubusercontent.com/tt-a1i/codex-web-bridge/main/scripts/install-release.sh | bash
 ```
 
-这个脚本会下载对应平台的 release tarball、校验 SHA-256、把 `codex-connector` 安装到 `~/.local/bin`，并保留解压包里的 `skills/` 目录用于 `codex-connector init --skill-root ...`。Release workflow 会为 Linux x86_64、macOS x86_64 和 macOS arm64 上传 tarball 与 checksum；发布步骤见 [docs/release.md](docs/release.md)。源码 checkout 用户仍可用：
+这个脚本会下载对应平台的 release tarball、校验 SHA-256、把 `codex-connector` 安装到 `~/.local/bin`，并保留解压包里的 `skills/` 目录用于 `codex-connector init --skill-root ...`。Release workflow 会为 Linux x86_64 和 macOS arm64 上传 tarball 与 checksum；发布步骤见 [docs/release.md](docs/release.md)。macOS Intel 和源码 checkout 用户仍可用：
 
 ```bash
 ./scripts/install-connector.sh

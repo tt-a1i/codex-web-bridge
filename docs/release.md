@@ -22,9 +22,11 @@ git push origin v0.1.0
 The `Release` GitHub Actions workflow builds and uploads:
 
 - `codex-web-bridge-connector-<version>-linux-x86_64.tar.gz`
-- `codex-web-bridge-connector-<version>-darwin-x86_64.tar.gz`
 - `codex-web-bridge-connector-<version>-darwin-aarch64.tar.gz`
 - matching `.sha256` files
+
+Intel macOS users can build from source with `./scripts/install-connector.sh`
+until a stable macOS x86_64 runner path is added.
 
 Manual retry is available from GitHub Actions with `workflow_dispatch`; pass the
 same tag, for example `v0.1.0`.
