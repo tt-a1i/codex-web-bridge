@@ -17,6 +17,7 @@
 - 新增 `bridge_handoff.py`，支持用 `.codex-web-bridge/outbox/<id>` 生成网页模型粘贴内容，并用 `.codex-web-bridge/inbox/<id>` 保存回复。
 - 新增浏览器 surface 选择说明，支持普通 Chrome/浏览器、Codex 应用侧边栏浏览器和手动粘贴，并提示侧边栏首次使用可能需要登录认证。
 - 新增 MCP Connector Mode 设计参考，用于 DevSpace-like 工作流，让 ChatGPT Pro 或其他 MCP host 在用户授权后连接本地 workspace，服务不支持浏览器操作的 agent/host 场景。
+- Rust connector 的 `init` 新增首次交互式 setup：在 TTY 中未传 `--root` 时，会提示填写 allowed roots、端口、public URL 和 skill roots；TTY-attached 脚本可用 `--no-interactive` 保留当前目录默认行为，自动化/agent 仍可继续使用显式 flags；非 loopback public URL 现在必须使用 HTTPS。
 - 新增 `connector/` 只读优先脚手架：包含 trust 模型与 allowed roots 校验（`config.py`）、路径包含边界（`workspace.py`）、只读工具面与权限分级（`tools.py`）、本地 JSON-RPC 服务（`server.py`，默认 loopback + owner token），以及路径包含与权限分级测试（`tests/test_connector.py`）。写文件/shell/worktree 等 execute 工具尚未实现，须在独立信任模型和测试就绪后再加入。
 - connector 实现标准 MCP 协议层（`protocol.py`）：`initialize` 协议版本协商（`2025-06-18` / `2025-03-26` / `2024-11-05`）+ `serverInfo` + `tools` 能力、`notifications/initialized`、`ping`，以及符合规范的 `tools/list`（含 JSON Schema `inputSchema`）和 `tools/call`（`content` 文本块 + `structuredContent` + `isError`）。`server.py` 改为纯 HTTP 传输，通知返回 HTTP 202 空响应。新增 `tests/test_protocol.py` 覆盖握手、版本协商、工具 schema、工具执行错误分流。这样 ChatGPT Pro、Claude 等 MCP host 可以直接连接本地 connector。
 

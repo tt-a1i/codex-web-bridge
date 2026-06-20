@@ -70,12 +70,30 @@ From the repo root:
 ./scripts/install-connector.sh
 ```
 
+For a human first run, the connector can ask the setup questions directly:
+
+```bash
+./bin/codex-connector init
+```
+
+It prompts for the target project roots, local port, optional public HTTPS
+origin, and optional connector skill roots. If the current checkout contains a
+`skills/` directory, that path is offered as the default skill root; type
+`none` at the skill-root prompt to skip skill discovery.
+
+For an agent or scripted setup, prefer explicit flags:
+
 ```bash
 ./bin/codex-connector \
   init --root /absolute/path/to/the/project \
   --skill-root /absolute/path/to/codex-pro/skills \
   --public-base-url https://example.trycloudflare.com
 ```
+
+If a TTY-attached script intentionally relies on the current directory as the
+allowed root, pass `--no-interactive` to avoid setup prompts. Non-loopback
+`--public-base-url` values must use `https`; `http` is accepted only for
+loopback localhost development.
 
 If `codex-connector` is on `PATH`, use it in place of `./bin/codex-connector`.
 `--root` is the target project exposed to ChatGPT. `--skill-root` is the

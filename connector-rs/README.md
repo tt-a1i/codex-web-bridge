@@ -12,10 +12,17 @@ stable source-checkout entrypoint; it wraps this crate without requiring users
 or agents to remember the Cargo manifest path.
 
 ```bash
-# Create a local config for the target workspace. Defaults to
-# connector-rs/connector.local.json.
+# Human first run: answer prompts for allowed roots, port, public URL, and
+# optional skill roots. Defaults to connector-rs/connector.local.json.
+./bin/codex-connector init
+
+# Agent/automation setup: pass explicit flags.
 ./bin/codex-connector \
   init --root /absolute/path/to/project
+
+# Preserve the current-directory default in a TTY-attached script without prompts.
+./bin/codex-connector \
+  init --no-interactive --force
 
 # Include the connector package's agent skills that ChatGPT can discover
 # through MCP. --root is the target workspace; --skill-root is this
@@ -54,6 +61,10 @@ or agents to remember the Cargo manifest path.
 ./bin/codex-connector worktrees cleanup
 ```
 
+If a `skills/` directory is detected during the interactive setup, it is
+offered as the default skill root; type `none` at that prompt to skip skill
+discovery.
+
 Install the release binary from a full checkout:
 
 ```bash
@@ -87,7 +98,8 @@ The release verifier runs Rust fmt/clippy/test/build, the Python reference
 tests, whitespace checks, wrapper, installer, and package smoke tests, a local
 `/mcp` HTTP smoke test, and prints the manual ChatGPT connector smoke prompt.
 
-The ChatGPT connector URL is the public HTTPS tunnel URL plus `/mcp`. Persistent
+The ChatGPT connector URL is the public HTTPS tunnel URL plus `/mcp`; non-loopback
+`public_base_url` values must use `https`. Persistent
 ChatGPT use should use the built-in OAuth owner approval flow:
 
 - protected resource metadata at `/.well-known/oauth-protected-resource`

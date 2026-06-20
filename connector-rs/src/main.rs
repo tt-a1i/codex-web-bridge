@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, HashSet, VecDeque},
     env, fs,
-    io::{self, BufRead, BufReader, Read},
+    io::{self, BufRead, BufReader, IsTerminal, Read, Write},
     net::SocketAddr,
     path::{Component, Path, PathBuf},
     process::{Command, Stdio},
@@ -172,6 +172,8 @@ enum CommandKind {
         state_dir: Option<PathBuf>,
         #[arg(long = "skill-root")]
         skill_roots: Vec<PathBuf>,
+        #[arg(long)]
+        no_interactive: bool,
         #[arg(long)]
         force: bool,
     },
@@ -542,6 +544,7 @@ async fn main() -> Result<()> {
             public_base_url,
             state_dir,
             skill_roots,
+            no_interactive,
             force,
         } => cmd_init(InitOptions {
             config_path: config,
@@ -554,6 +557,7 @@ async fn main() -> Result<()> {
             public_base_url,
             state_dir,
             skill_roots,
+            no_interactive,
             force,
         }),
         CommandKind::Serve { config } => serve(load_config(&config)?).await,
@@ -597,10 +601,182 @@ struct InitOptions {
     public_base_url: Option<String>,
     state_dir: Option<PathBuf>,
     skill_roots: Vec<PathBuf>,
+    no_interactive: bool,
     force: bool,
 }
 
 fn cmd_init(options: InitOptions) -> Result<()> {
+    let options = maybe_prompt_init_options(options)?;
+    write_init_config(options)
+}
+
+fn maybe_prompt_init_options(options: InitOptions) -> Result<InitOptions> {
+    if !options.roots.is_empty() || !io::stdin().is_terminal() || !io::stdout().is_terminal() {
+        return Ok(options);
+    }
+    if options.no_interactive {
+        return Ok(options);
+    }
+    let stdin = io::stdin();
+    let stdout = io::stdout();
+    let mut input = stdin.lock();
+    let mut output = stdout.lock();
+    prompt_init_options(options, &mut input, &mut output)
+}
+
+fn prompt_init_options(
+    mut options: InitOptions,
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+) -> Result<InitOptions> {
+    writeln!(output, "Codex connector setup")?;
+    writeln!(output, "Press Enter to accept the value in brackets.")?;
+    writeln!(output)?;
+
+    let default_roots = default_allowed_roots_for_prompt()?;
+    let default_root_prompt = format_path_list(&default_roots);
+    let roots_answer = prompt_line(
+        input,
+        output,
+        "Allowed project roots, comma-separated",
+        (!default_root_prompt.is_empty()).then_some(default_root_prompt.as_str()),
+    )?;
+    options.roots = parse_path_list_with_default(&roots_answer, &default_roots)?;
+
+    let default_port = options.port.to_string();
+    let port_answer = prompt_line(input, output, "Local MCP port", Some(&default_port))?;
+    options.port = port_answer
+        .trim()
+        .parse::<u16>()
+        .with_context(|| "local MCP port must be a number between 0 and 65535")?;
+
+    if options.public_base_url.is_none() {
+        let public_answer = prompt_line(
+            input,
+            output,
+            "Public HTTPS origin for ChatGPT, without /mcp (optional)",
+            None,
+        )?;
+        let public_answer = public_answer.trim().trim_end_matches('/').to_string();
+        if !public_answer.is_empty() {
+            options.public_base_url = Some(public_answer);
+        }
+    }
+
+    if options.skill_roots.is_empty() {
+        let default_skill_roots = default_skill_roots_for_prompt();
+        let default_skill_prompt = format_path_list(&default_skill_roots);
+        let skill_answer = prompt_line(
+            input,
+            output,
+            "Connector skill roots, comma-separated (optional; type none to skip)",
+            (!default_skill_prompt.is_empty()).then_some(default_skill_prompt.as_str()),
+        )?;
+        options.skill_roots =
+            parse_optional_path_list_with_default(&skill_answer, &default_skill_roots)?;
+    }
+
+    writeln!(output)?;
+    writeln!(
+        output,
+        "Writing {:?} config. Use --trust-level execute only when you intentionally want mutating tools.",
+        options.trust_level
+    )?;
+    output.flush()?;
+    Ok(options)
+}
+
+fn prompt_line(
+    input: &mut impl BufRead,
+    output: &mut impl Write,
+    label: &str,
+    default: Option<&str>,
+) -> Result<String> {
+    match default {
+        Some(default) => write!(output, "{label} [{default}]: ")?,
+        None => write!(output, "{label}: ")?,
+    }
+    output.flush()?;
+    let mut line = String::new();
+    input.read_line(&mut line)?;
+    let trimmed = line.trim();
+    if trimmed.is_empty() {
+        Ok(default.unwrap_or("").to_string())
+    } else {
+        Ok(trimmed.to_string())
+    }
+}
+
+fn parse_path_list_with_default(input: &str, default: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    if input.trim().is_empty() {
+        if default.is_empty() {
+            bail!("path list must include at least one path");
+        }
+        return Ok(default.to_vec());
+    }
+    let paths = input
+        .split(',')
+        .map(str::trim)
+        .filter(|part| !part.is_empty())
+        .map(PathBuf::from)
+        .collect::<Vec<_>>();
+    if paths.is_empty() {
+        bail!("path list must include at least one path");
+    }
+    Ok(paths)
+}
+
+fn default_allowed_roots_for_prompt() -> Result<Vec<PathBuf>> {
+    let cwd = env::current_dir()?;
+    if is_broad_root(&cwd) {
+        Ok(vec![])
+    } else {
+        Ok(vec![cwd])
+    }
+}
+
+fn parse_optional_path_list_with_default(input: &str, default: &[PathBuf]) -> Result<Vec<PathBuf>> {
+    if input.trim().is_empty() && default.is_empty() {
+        return Ok(vec![]);
+    }
+    if input.trim().eq_ignore_ascii_case("none") {
+        return Ok(vec![]);
+    }
+    parse_path_list_with_default(input, default)
+}
+
+fn default_skill_roots_for_prompt() -> Vec<PathBuf> {
+    let mut roots = Vec::new();
+    if let Ok(cwd) = env::current_dir() {
+        push_skill_root_candidate(&mut roots, cwd.join("skills"));
+    }
+    if let Ok(exe) = env::current_exe() {
+        if let Some(package_root) = exe.parent().and_then(Path::parent) {
+            push_skill_root_candidate(&mut roots, package_root.join("skills"));
+        }
+    }
+    roots
+}
+
+fn push_skill_root_candidate(roots: &mut Vec<PathBuf>, candidate: PathBuf) {
+    if !candidate.is_dir() {
+        return;
+    }
+    if roots.iter().any(|root| root == &candidate) {
+        return;
+    }
+    roots.push(candidate);
+}
+
+fn format_path_list(paths: &[PathBuf]) -> String {
+    paths
+        .iter()
+        .map(|path| path.display().to_string())
+        .collect::<Vec<_>>()
+        .join(",")
+}
+
+fn write_init_config(options: InitOptions) -> Result<()> {
     let InitOptions {
         config_path,
         roots,
@@ -612,6 +788,7 @@ fn cmd_init(options: InitOptions) -> Result<()> {
         public_base_url,
         state_dir,
         skill_roots,
+        no_interactive: _,
         force,
     } = options;
     if config_path.exists() && !force {
@@ -908,20 +1085,14 @@ fn validate_raw(raw: RawConfig) -> Result<Config> {
     if raw.allowed_roots.is_empty() {
         bail!("allowed_roots must not be empty");
     }
-    let home = env::var_os("HOME").map(PathBuf::from);
     let mut roots = Vec::new();
     for root in raw.allowed_roots {
         let expanded = expand_home(&root);
         let canonical = expanded
             .canonicalize()
             .with_context(|| format!("allowed root does not exist: {}", expanded.display()))?;
-        if canonical == Path::new("/") {
-            bail!("allowed root is too broad: /");
-        }
-        if let Some(home) = &home {
-            if canonical == home.canonicalize().unwrap_or_else(|_| home.clone()) {
-                bail!("allowed root is too broad: {}", canonical.display());
-            }
+        if is_broad_root(&canonical) {
+            bail!("allowed root is too broad: {}", canonical.display());
         }
         if !canonical.is_dir() {
             bail!("allowed root is not a directory: {}", canonical.display());
@@ -946,6 +1117,12 @@ fn validate_raw(raw: RawConfig) -> Result<Config> {
         let parsed = url::Url::parse(url).with_context(|| "public_base_url must be a URL")?;
         if !matches!(parsed.scheme(), "http" | "https") || parsed.host_str().is_none() {
             bail!("public_base_url must be an http(s) origin");
+        }
+        if parsed.scheme() != "https" {
+            let host = parsed.host_str().unwrap_or_default();
+            if !matches!(host, "127.0.0.1" | "::1" | "localhost") {
+                bail!("public_base_url must use https unless it is loopback localhost");
+            }
         }
         if parsed.path() != "/" && !parsed.path().is_empty() {
             bail!("public_base_url must be the public origin without /mcp or any path");
@@ -5445,6 +5622,16 @@ fn expand_home(path: &Path) -> PathBuf {
     path.to_path_buf()
 }
 
+fn is_broad_root(path: &Path) -> bool {
+    if path.parent().is_none() {
+        return true;
+    }
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| path == home.canonicalize().unwrap_or(home))
+        .unwrap_or(false)
+}
+
 fn absolutize(path: &Path) -> Result<PathBuf> {
     if path.is_absolute() {
         return Ok(path.to_path_buf());
@@ -6645,6 +6832,96 @@ mod tests {
         }
     }
 
+    fn init_options_for_test(config_path: PathBuf) -> InitOptions {
+        InitOptions {
+            config_path,
+            roots: vec![],
+            trust_level: TrustLevel::Readonly,
+            host: "127.0.0.1".to_string(),
+            port: 8765,
+            owner_token: None,
+            no_owner_token: false,
+            public_base_url: None,
+            state_dir: None,
+            skill_roots: vec![],
+            no_interactive: false,
+            force: false,
+        }
+    }
+
+    #[test]
+    fn prompt_init_options_collects_first_run_answers() {
+        let root_a = temp_project();
+        let root_b = temp_project();
+        let skill_root = temp_project();
+        let config_path =
+            env::temp_dir().join(format!("codex-connector-prompt-{}.json", Uuid::new_v4()));
+        let input = format!(
+            "{},{}\n9876\nhttps://example.trycloudflare.com/\n{}\n",
+            root_a.display(),
+            root_b.display(),
+            skill_root.display()
+        );
+        let mut input = std::io::Cursor::new(input.into_bytes());
+        let mut output = Vec::new();
+        let prompted =
+            prompt_init_options(init_options_for_test(config_path), &mut input, &mut output)
+                .unwrap();
+
+        assert_eq!(prompted.roots, vec![root_a.clone(), root_b.clone()]);
+        assert_eq!(prompted.port, 9876);
+        assert_eq!(
+            prompted.public_base_url.as_deref(),
+            Some("https://example.trycloudflare.com")
+        );
+        assert_eq!(prompted.skill_roots, vec![skill_root.clone()]);
+        let output = String::from_utf8(output).unwrap();
+        assert!(output.contains("Codex connector setup"));
+        assert!(output.contains("Allowed project roots"));
+        fs::remove_dir_all(root_a).unwrap();
+        fs::remove_dir_all(root_b).unwrap();
+        fs::remove_dir_all(skill_root).unwrap();
+    }
+
+    #[test]
+    fn prompt_init_options_accepts_defaults() {
+        let config_path =
+            env::temp_dir().join(format!("codex-connector-prompt-{}.json", Uuid::new_v4()));
+        let mut options = init_options_for_test(config_path);
+        options.skill_roots = vec![PathBuf::from("/explicit/skills")];
+        options.public_base_url = Some("https://bridge.example".to_string());
+        let mut input = std::io::Cursor::new(b"\n8766\n".to_vec());
+        let mut output = Vec::new();
+        let prompted = prompt_init_options(options, &mut input, &mut output).unwrap();
+
+        assert_eq!(prompted.roots, vec![env::current_dir().unwrap()]);
+        assert_eq!(prompted.port, 8766);
+        assert_eq!(
+            prompted.public_base_url.as_deref(),
+            Some("https://bridge.example")
+        );
+        assert_eq!(
+            prompted.skill_roots,
+            vec![PathBuf::from("/explicit/skills")]
+        );
+    }
+
+    #[test]
+    fn optional_path_list_accepts_none() {
+        assert_eq!(
+            parse_optional_path_list_with_default("none", &[PathBuf::from("/default")]).unwrap(),
+            Vec::<PathBuf>::new()
+        );
+        assert_eq!(
+            parse_optional_path_list_with_default("", &[PathBuf::from("/default")]).unwrap(),
+            vec![PathBuf::from("/default")]
+        );
+        assert_eq!(
+            parse_optional_path_list_with_default("", &[]).unwrap(),
+            Vec::<PathBuf>::new()
+        );
+    }
+
     fn init_git_repo(root: &Path) {
         Command::new("git")
             .args(["init"])
@@ -6774,6 +7051,29 @@ mod tests {
         raw.public_base_url = Some("https://example.com/mcp".to_string());
         let err = validate_raw(raw).unwrap_err().to_string();
         assert!(err.contains("without /mcp"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validate_rejects_cleartext_public_base_url() {
+        let root = temp_project();
+        let mut raw = raw_config(root.clone());
+        raw.public_base_url = Some("http://example.com".to_string());
+        let err = validate_raw(raw).unwrap_err().to_string();
+        assert!(err.contains("must use https"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn validate_allows_loopback_http_public_base_url() {
+        let root = temp_project();
+        let mut raw = raw_config(root.clone());
+        raw.public_base_url = Some("http://127.0.0.1:8765".to_string());
+        let config = validate_raw(raw).unwrap();
+        assert_eq!(
+            config.public_base_url.as_deref(),
+            Some("http://127.0.0.1:8765")
+        );
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -62,7 +62,7 @@ cargo test --manifest-path connector-rs/Cargo.toml
 python3 -m unittest discover -s connector/tests -t .
 ```
 
-网页端 ChatGPT / GPT Pro 接入时，Connector URL 填公开可达或 Tunnel 暴露的 `/mcp` 地址，例如 `https://<tunnel-host>/mcp`。持久使用走 Rust connector 的 OAuth owner approval：server 会暴露 protected-resource metadata、authorization-server metadata、authorization code + PKCE、refresh token，并把 owner approval password 与 OAuth token 存在 `state_dir`，不写入仓库配置。`owner_token` 仍保留给本地/自管 MCP client 直接用 `Authorization: Bearer <owner_token>` 调试或自动化。
+网页端 ChatGPT / GPT Pro 接入时，Connector URL 填公开可达或 Tunnel 暴露的 `/mcp` 地址，例如 `https://<tunnel-host>/mcp`；非 loopback 的 `public_base_url` 必须使用 `https`。持久使用走 Rust connector 的 OAuth owner approval：server 会暴露 protected-resource metadata、authorization-server metadata、authorization code + PKCE、refresh token，并把 owner approval password 与 OAuth token 存在 `state_dir`，不写入仓库配置。`owner_token` 仍保留给本地/自管 MCP client 直接用 `Authorization: Bearer <owner_token>` 调试或自动化。
 
 MCP host 通过 `POST /mcp` 发送 JSON-RPC 2.0 消息。ChatGPT 这类网页端 host 走 OAuth Bearer token；本地自管 client 也可以直接用 owner token。`/rpc` 作为旧本地调试路径继续兼容。`initialize` 会做协议版本协商（支持 `2025-06-18` / `2025-03-26` / `2024-11-05`）并返回 `serverInfo`、`tools` 能力以及响应头 `Mcp-Session-Id`，host 在后续请求里回带该 session id；`notifications/initialized` 会被接受，但 HTTP connector 不依赖它来解锁后续工具调用。`initialize` 之前（除 `ping`）的请求会被拒绝；通知（无 `id`）返回 HTTP 202 空响应。
 
@@ -208,8 +208,14 @@ Rust Connector CLI：
 # 可选：生成包含二进制、skill、Rust connector 源码和文档的发布包
 ./scripts/package-connector.sh
 
-# 创建配置，默认写入 connector-rs/connector.local.json 并生成 owner token
+# 首次人类用户可直接运行交互式 setup，按提示填写 allowed roots、端口、public URL 和 skill roots
+./bin/codex-connector init
+
+# Agent/自动化路径：显式创建配置，默认写入 connector-rs/connector.local.json 并生成 owner token
 ./bin/codex-connector init --root /absolute/path/to/project
+
+# TTY-attached 脚本如果要保留“默认当前目录且不提问”的旧行为，可以显式关闭交互
+./bin/codex-connector init --no-interactive --force
 
 # 可选：让 MCP host 发现随 connector 包发布的 Codex skills
 ./bin/codex-connector init --root /absolute/path/to/project --skill-root /absolute/path/to/codex-pro/skills --force
@@ -242,6 +248,8 @@ Rust Connector CLI：
 ./bin/codex-connector worktrees list
 ./bin/codex-connector worktrees cleanup
 ```
+
+交互式 setup 如果检测到当前 checkout 下的 `skills/`，会把它作为默认 skill root；如果不想开放 skill discovery，在该提示处输入 `none`。
 
 发布前验证：
 

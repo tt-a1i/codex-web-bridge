@@ -72,6 +72,10 @@ Implemented here:
 - PR handoff visibility foundation: readonly `show_pull_requests` and
   `render_pull_requests` aggregate connector-created PR records and lifecycle
   status counts without reading PR body files or calling GitHub.
+- First-run CLI setup foundation: `codex-connector init` prompts human users
+  for allowed roots, local port, optional public origin, and optional skill
+  roots when run interactively without `--root`; scripted agents can continue
+  using explicit flags.
 - Python reference connector: retained only as a verified protocol reference
   while the Rust connector reaches full parity.
 
@@ -90,7 +94,6 @@ Still missing versus DevSpace:
   review-handoff, pull-request handoff, and edit-plan history cards.
 - Published registry/tap install path beyond the generated source-checkout
   release package.
-- Interactive first-run CLI prompts beyond explicit `init --root` flags.
 
 ## Parity Phases
 
@@ -295,6 +298,12 @@ Deliverables:
   Status: implemented as `bin/codex-connector`.
 - Release binary install to a user prefix. Status: implemented as
   `scripts/install-connector.sh --prefix <dir>`, defaulting to `~/.local`.
+- Interactive first-run setup. Status: implemented for TTY runs of
+  `codex-connector init` without `--root`; it asks for allowed project roots,
+  local port, optional public HTTPS origin, and optional connector skill roots.
+  Non-interactive runs keep the previous current-directory default,
+  TTY-attached scripts can pass `--no-interactive`, and agents should continue
+  passing explicit flags. Non-loopback public URLs must use HTTPS.
 - Upgrade notes for users who installed only the skill. Status: implemented in
   README and ChatGPT setup runbook.
 - Release checklist that runs unit tests, CLI smoke tests, and a ChatGPT MCP
