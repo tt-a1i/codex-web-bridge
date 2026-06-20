@@ -113,6 +113,30 @@ enum TrustLevel {
     Execute,
 }
 
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum ToolMode {
+    Minimal,
+    Standard,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum WriteMode {
+    Off,
+    Handoff,
+    Workspace,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+enum ShellMode {
+    Off,
+    Safe,
+    Full,
+}
+
 #[derive(Debug, Serialize, Deserialize)]
 struct RawConfig {
     allowed_roots: Vec<PathBuf>,
@@ -120,6 +144,12 @@ struct RawConfig {
     skill_roots: Vec<PathBuf>,
     #[serde(default = "default_trust")]
     trust_level: TrustLevel,
+    #[serde(default = "default_tool_mode")]
+    tool_mode: ToolMode,
+    #[serde(default = "default_write_mode")]
+    write_mode: WriteMode,
+    #[serde(default = "default_shell_mode")]
+    shell_mode: ShellMode,
     #[serde(default = "default_host")]
     host: String,
     #[serde(default = "default_port")]
@@ -140,6 +170,9 @@ struct Config {
     skill_roots: Vec<PathBuf>,
     auto_skill_roots: bool,
     trust_level: TrustLevel,
+    tool_mode: ToolMode,
+    write_mode: WriteMode,
+    shell_mode: ShellMode,
     host: String,
     port: u16,
     owner_token: Option<String>,
@@ -164,6 +197,12 @@ enum CommandKind {
         roots: Vec<PathBuf>,
         #[arg(long, value_enum, default_value = "readonly")]
         trust_level: TrustLevel,
+        #[arg(long, value_enum, default_value = "full")]
+        tool_mode: ToolMode,
+        #[arg(long, value_enum, default_value = "workspace")]
+        write_mode: WriteMode,
+        #[arg(long, value_enum, default_value = "full")]
+        shell_mode: ShellMode,
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
         #[arg(long, default_value_t = 8765)]
@@ -578,6 +617,9 @@ async fn main() -> Result<()> {
             config,
             roots,
             trust_level,
+            tool_mode,
+            write_mode,
+            shell_mode,
             host,
             port,
             owner_token,
@@ -592,6 +634,9 @@ async fn main() -> Result<()> {
             config_path: config,
             roots,
             trust_level,
+            tool_mode,
+            write_mode,
+            shell_mode,
             host,
             port,
             owner_token,
@@ -625,6 +670,18 @@ fn default_trust() -> TrustLevel {
     TrustLevel::Readonly
 }
 
+fn default_tool_mode() -> ToolMode {
+    ToolMode::Full
+}
+
+fn default_write_mode() -> WriteMode {
+    WriteMode::Workspace
+}
+
+fn default_shell_mode() -> ShellMode {
+    ShellMode::Full
+}
+
 fn default_auto_skill_roots() -> bool {
     true
 }
@@ -641,6 +698,9 @@ struct InitOptions {
     config_path: PathBuf,
     roots: Vec<PathBuf>,
     trust_level: TrustLevel,
+    tool_mode: ToolMode,
+    write_mode: WriteMode,
+    shell_mode: ShellMode,
     host: String,
     port: u16,
     owner_token: Option<String>,
@@ -732,6 +792,11 @@ fn prompt_init_options(
         output,
         "Writing {:?} config. Use --trust-level execute only when you intentionally want mutating tools.",
         options.trust_level
+    )?;
+    writeln!(
+        output,
+        "Tool surface: {:?}; source writes: {:?}; shell: {:?}.",
+        options.tool_mode, options.write_mode, options.shell_mode
     )?;
     output.flush()?;
     Ok(options)
@@ -832,6 +897,9 @@ fn write_init_config(options: InitOptions) -> Result<()> {
         config_path,
         roots,
         trust_level,
+        tool_mode,
+        write_mode,
+        shell_mode,
         host,
         port,
         owner_token,
@@ -871,6 +939,9 @@ fn write_init_config(options: InitOptions) -> Result<()> {
         allowed_roots: roots,
         skill_roots,
         trust_level,
+        tool_mode,
+        write_mode,
+        shell_mode,
         host,
         port,
         owner_token,
@@ -884,6 +955,9 @@ fn write_init_config(options: InitOptions) -> Result<()> {
         skill_roots: config.skill_roots.clone(),
         auto_skill_roots: config.auto_skill_roots,
         trust_level: config.trust_level,
+        tool_mode: config.tool_mode,
+        write_mode: config.write_mode,
+        shell_mode: config.shell_mode,
         host: config.host.clone(),
         port: config.port,
         owner_token: config.owner_token.clone(),
@@ -931,6 +1005,9 @@ fn cmd_doctor(config_path: PathBuf) -> Result<()> {
     println!("status: ok");
     println!("config: {}", config_path.display());
     println!("trust_level: {:?}", config.trust_level);
+    println!("tool_mode: {:?}", config.tool_mode);
+    println!("write_mode: {:?}", config.write_mode);
+    println!("shell_mode: {:?}", config.shell_mode);
     println!(
         "local_endpoint: http://{}:{}{}",
         config.host, config.port, PRIMARY_ENDPOINT
@@ -1005,7 +1082,7 @@ fn cmd_doctor(config_path: PathBuf) -> Result<()> {
             "disabled"
         }
     );
-    println!("tools: {}", tool_names(config.trust_level).join(", "));
+    println!("tools: {}", tool_names(&config).join(", "));
     println!("git: {}", if git_available() { "ok" } else { "not found" });
     println!("gh: {}", if gh_available() { "ok" } else { "not found" });
     println!(
@@ -1208,6 +1285,9 @@ fn validate_raw(raw: RawConfig) -> Result<Config> {
         skill_roots,
         auto_skill_roots: raw.auto_skill_roots,
         trust_level: raw.trust_level,
+        tool_mode: raw.tool_mode,
+        write_mode: raw.write_mode,
+        shell_mode: raw.shell_mode,
         host: raw.host,
         port: raw.port,
         owner_token: raw.owner_token,
@@ -2042,7 +2122,8 @@ fn handle_request(
                 LATEST_PROTOCOL_VERSION
             };
             let instructions = match state.config.trust_level {
-                TrustLevel::Execute => "Rust connector in execute mode. Open a workspace inside an allowed root, follow returned project instructions, read relevant nested instruction files before working under those directories, and read a skill's skill://.../SKILL.md entrypoint before reading other files from that skill. Use scoped write/edit tools only when the user intended local code mutation.",
+                TrustLevel::Execute if state.config.write_mode == WriteMode::Workspace => "Rust connector in execute mode. Open a workspace inside an allowed root, follow returned project instructions, read relevant nested instruction files before working under those directories, and read a skill's skill://.../SKILL.md entrypoint before reading other files from that skill. Use scoped write/edit tools only when the user intended local code mutation.",
+                TrustLevel::Execute => "Rust connector in execute trust with source writes disabled by write_mode. Use handoff/review tools for recoverable plans, and do not assume workspace files can be mutated.",
                 _ => "Readonly Rust connector. Open a workspace inside an allowed root, follow returned project instructions, read relevant nested instruction files before working under those directories, and read a skill's skill://.../SKILL.md entrypoint before reading other files from that skill.",
             };
             rpc_result(
@@ -2072,10 +2153,9 @@ fn handle_request(
                 );
             }
             match method {
-                "tools/list" => rpc_result(
-                    req_id,
-                    json!({"tools": tool_definitions(state.config.trust_level)}),
-                ),
+                "tools/list" => {
+                    rpc_result(req_id, json!({"tools": tool_definitions(&state.config)}))
+                }
                 "tools/call" => handle_tools_call(state, req_id, params, session_id.as_deref()),
                 "resources/list" => rpc_result(req_id, resources_list_result()),
                 "resources/read" => handle_resources_read(req_id, params),
@@ -2151,6 +2231,18 @@ fn required_tool_scope_for_call(params: &Value) -> Option<&'static str> {
 
 fn tool_call_name(params: &Value) -> Option<&str> {
     params.get("name").and_then(Value::as_str)
+}
+
+fn review_tools_enabled(config: &Config) -> bool {
+    matches!(config.trust_level, TrustLevel::Review | TrustLevel::Execute)
+}
+
+fn workspace_write_enabled(config: &Config) -> bool {
+    config.trust_level == TrustLevel::Execute && config.write_mode == WriteMode::Workspace
+}
+
+fn shell_enabled(config: &Config) -> bool {
+    config.trust_level == TrustLevel::Execute && config.shell_mode != ShellMode::Off
 }
 
 fn resources_list_result() -> Value {
@@ -3735,10 +3827,7 @@ fn call_tool(
         "render_edit_plans" => show_edit_plans_tool(state, args),
         "list_skills" => list_skills_tool(state),
         "create_note" => {
-            if !matches!(
-                state.config.trust_level,
-                TrustLevel::Review | TrustLevel::Execute
-            ) {
+            if !review_tools_enabled(&state.config) {
                 return ToolOutcome::ToolError(
                     "create_note requires trust_level=review or trust_level=execute".to_string(),
                 );
@@ -3746,10 +3835,7 @@ fn call_tool(
             create_note_tool(state, args, session_id)
         }
         "create_edit_plan" => {
-            if !matches!(
-                state.config.trust_level,
-                TrustLevel::Review | TrustLevel::Execute
-            ) {
+            if !review_tools_enabled(&state.config) {
                 return ToolOutcome::ToolError(
                     "create_edit_plan requires trust_level=review or trust_level=execute"
                         .to_string(),
@@ -3758,10 +3844,7 @@ fn call_tool(
             create_edit_plan_tool(state, args, session_id)
         }
         "update_edit_plan_status" => {
-            if !matches!(
-                state.config.trust_level,
-                TrustLevel::Review | TrustLevel::Execute
-            ) {
+            if !review_tools_enabled(&state.config) {
                 return ToolOutcome::ToolError(
                     "update_edit_plan_status requires trust_level=review or trust_level=execute"
                         .to_string(),
@@ -3770,75 +3853,87 @@ fn call_tool(
             update_edit_plan_status_tool(state, args)
         }
         "write" => {
-            if state.config.trust_level != TrustLevel::Execute {
-                return ToolOutcome::ToolError("write requires trust_level=execute".to_string());
+            if !workspace_write_enabled(&state.config) {
+                return ToolOutcome::ToolError(
+                    "write requires trust_level=execute and write_mode=workspace".to_string(),
+                );
             }
             write_file_tool(state, args)
         }
         "edit" => {
-            if state.config.trust_level != TrustLevel::Execute {
-                return ToolOutcome::ToolError("edit requires trust_level=execute".to_string());
+            if !workspace_write_enabled(&state.config) {
+                return ToolOutcome::ToolError(
+                    "edit requires trust_level=execute and write_mode=workspace".to_string(),
+                );
             }
             edit_file_tool(state, args)
         }
         "apply_patch" => {
-            if state.config.trust_level != TrustLevel::Execute {
+            if !workspace_write_enabled(&state.config) {
                 return ToolOutcome::ToolError(
-                    "apply_patch requires trust_level=execute".to_string(),
+                    "apply_patch requires trust_level=execute and write_mode=workspace".to_string(),
                 );
             }
             apply_patch_tool(state, args, session_id)
         }
         "move_path" => {
-            if state.config.trust_level != TrustLevel::Execute {
+            if !workspace_write_enabled(&state.config) {
                 return ToolOutcome::ToolError(
-                    "move_path requires trust_level=execute".to_string(),
+                    "move_path requires trust_level=execute and write_mode=workspace".to_string(),
                 );
             }
             move_path_tool(state, args)
         }
         "shell" => {
-            if state.config.trust_level != TrustLevel::Execute {
-                return ToolOutcome::ToolError("shell requires trust_level=execute".to_string());
+            if !shell_enabled(&state.config) {
+                return ToolOutcome::ToolError(
+                    "shell requires trust_level=execute and shell_mode=safe or shell_mode=full"
+                        .to_string(),
+                );
             }
             shell_tool(state, args)
         }
         "open_worktree" => {
-            if state.config.trust_level != TrustLevel::Execute {
+            if !workspace_write_enabled(&state.config) {
                 return ToolOutcome::ToolError(
-                    "open_worktree requires trust_level=execute".to_string(),
+                    "open_worktree requires trust_level=execute and write_mode=workspace"
+                        .to_string(),
                 );
             }
             open_worktree_tool(state, args)
         }
         "publish_branch" => {
-            if state.config.trust_level != TrustLevel::Execute {
+            if !workspace_write_enabled(&state.config) {
                 return ToolOutcome::ToolError(
-                    "publish_branch requires trust_level=execute".to_string(),
+                    "publish_branch requires trust_level=execute and write_mode=workspace"
+                        .to_string(),
                 );
             }
             publish_branch_tool(state, args)
         }
         "create_pull_request" => {
-            if state.config.trust_level != TrustLevel::Execute {
+            if !workspace_write_enabled(&state.config) {
                 return ToolOutcome::ToolError(
-                    "create_pull_request requires trust_level=execute".to_string(),
+                    "create_pull_request requires trust_level=execute and write_mode=workspace"
+                        .to_string(),
                 );
             }
             create_pull_request_tool(state, args)
         }
         "refresh_pull_request_status" => {
-            if state.config.trust_level != TrustLevel::Execute {
+            if !workspace_write_enabled(&state.config) {
                 return ToolOutcome::ToolError(
-                    "refresh_pull_request_status requires trust_level=execute".to_string(),
+                    "refresh_pull_request_status requires trust_level=execute and write_mode=workspace"
+                        .to_string(),
                 );
             }
             refresh_pull_request_status_tool(state, args)
         }
         "refresh_pull_requests" => {
-            if state.config.trust_level != TrustLevel::Execute {
+            if !workspace_write_enabled(&state.config) {
                 return ToolOutcome::ToolError(
-                    "refresh_pull_requests requires trust_level=execute".to_string(),
+                    "refresh_pull_requests requires trust_level=execute and write_mode=workspace"
+                        .to_string(),
                 );
             }
             refresh_pull_requests_tool(state, args)
@@ -3883,8 +3978,8 @@ fn open_workspace_tool(
     match mode {
         "checkout" => open_workspace(state, path),
         "worktree" => {
-            if state.config.trust_level != TrustLevel::Execute {
-                bail!("open_workspace mode=worktree requires trust_level=execute");
+            if !workspace_write_enabled(&state.config) {
+                bail!("open_workspace mode=worktree requires trust_level=execute and write_mode=workspace");
             }
             let source = open_workspace(state, path)?;
             let source_workspace_id = source
@@ -5024,6 +5119,9 @@ fn shell_tool(state: &AppState, args: &serde_json::Map<String, Value>) -> Result
         bail!("command must be non-empty");
     }
     ensure_text_content(command)?;
+    if state.config.shell_mode == ShellMode::Safe {
+        validate_safe_shell_command(command)?;
+    }
     let cwd_rel = args.get("cwd").and_then(Value::as_str).unwrap_or(".");
     let cwd = resolve_dir(&ws, cwd_rel)?;
     let timeout_ms = optional_u64(args, "timeout_ms")?.unwrap_or(SHELL_TIMEOUT.as_millis() as u64);
@@ -5081,6 +5179,68 @@ fn shell_tool(state: &AppState, args: &serde_json::Map<String, Value>) -> Result
         "stderr": String::from_utf8_lossy(&stderr),
         "truncated": stdout_truncated || stderr_truncated,
     }))
+}
+
+fn validate_safe_shell_command(command: &str) -> Result<()> {
+    let trimmed = command.trim();
+    if trimmed.contains('\n') || trimmed.contains('\r') {
+        bail!("shell_mode=safe rejects multi-line commands");
+    }
+    if trimmed.contains("..")
+        || trimmed.contains('$')
+        || trimmed.contains('`')
+        || trimmed.contains(';')
+        || trimmed.contains('&')
+        || trimmed.contains('|')
+        || trimmed.contains('<')
+        || trimmed.contains('>')
+    {
+        bail!("shell_mode=safe rejects shell metacharacters, parent traversal, and expansions");
+    }
+    let words = trimmed.split_whitespace().collect::<Vec<_>>();
+    if words.is_empty() {
+        bail!("command must be non-empty");
+    }
+    if words.iter().any(|word| word.starts_with('/')) {
+        bail!("shell_mode=safe rejects absolute paths");
+    }
+    if words
+        .iter()
+        .any(|word| matches!(*word, ".env" | ".git" | "node_modules"))
+    {
+        bail!("shell_mode=safe rejects sensitive or generated paths");
+    }
+    if safe_shell_command_allowed(&words) {
+        Ok(())
+    } else {
+        bail!(
+            "shell_mode=safe allows only read-only git commands and common test/lint/typecheck/build commands"
+        )
+    }
+}
+
+fn safe_shell_command_allowed(words: &[&str]) -> bool {
+    match words {
+        ["pwd"] | ["ls"] | ["ls", ..] | ["find", ..] => true,
+        ["git", "status", ..] | ["git", "diff", ..] | ["git", "log", ..] => true,
+        ["cargo", "test", ..] | ["cargo", "check", ..] | ["cargo", "clippy", ..] => true,
+        ["go", "test", ..] => true,
+        ["pytest", ..] | ["python", "-m", "pytest", ..] | ["python3", "-m", "pytest", ..] => true,
+        ["npm", "test", ..] | ["pnpm", "test", ..] | ["yarn", "test", ..] | ["bun", "test", ..] => {
+            true
+        }
+        ["npm", "run", script, ..]
+        | ["pnpm", "run", script, ..]
+        | ["yarn", "run", script, ..]
+        | ["bun", "run", script, ..] => matches!(
+            *script,
+            "test" | "lint" | "typecheck" | "check" | "build" | "fmt:check" | "format:check"
+        ),
+        ["npx", "tsc", ..] | ["tsc", ..] => true,
+        ["npx", "eslint", ..] | ["eslint", ..] => true,
+        ["npx", "biome", "check", ..] | ["biome", "check", ..] => true,
+        _ => false,
+    }
 }
 
 fn open_worktree_tool(state: &AppState, args: &serde_json::Map<String, Value>) -> Result<Value> {
@@ -6740,14 +6900,14 @@ fn tool_result_meta(tool: &str, payload: &Value, is_error: bool) -> Value {
     meta
 }
 
-fn tool_definitions(trust_level: TrustLevel) -> Vec<Value> {
-    tool_names(trust_level)
+fn tool_definitions(config: &Config) -> Vec<Value> {
+    tool_names(config)
         .into_iter()
-        .filter_map(|name| tool_definition(name, trust_level))
+        .filter_map(|name| tool_definition(name, config.trust_level))
         .collect()
 }
 
-fn tool_names(trust_level: TrustLevel) -> Vec<&'static str> {
+fn tool_names(config: &Config) -> Vec<&'static str> {
     let mut tools = vec![
         "open_workspace",
         "read",
@@ -6755,40 +6915,52 @@ fn tool_names(trust_level: TrustLevel) -> Vec<&'static str> {
         "search",
         "git_status",
         "git_diff",
-        "preview_patch",
-        "show_session",
         "show_changes",
-        "render_changes",
-        "show_review",
-        "render_review",
-        "list_worktrees",
-        "list_pull_requests",
-        "show_pull_requests",
-        "render_pull_requests",
-        "list_notes",
-        "list_edit_plans",
-        "show_edit_plans",
-        "render_edit_plans",
         "list_skills",
     ];
-    if matches!(trust_level, TrustLevel::Review | TrustLevel::Execute) {
-        tools.push("create_note");
-        tools.push("create_edit_plan");
-        tools.push("update_edit_plan_status");
-    }
-    if trust_level == TrustLevel::Execute {
+
+    if config.tool_mode != ToolMode::Minimal {
         tools.extend([
-            "write",
-            "edit",
-            "apply_patch",
-            "move_path",
-            "shell",
-            "open_worktree",
-            "publish_branch",
-            "create_pull_request",
-            "refresh_pull_request_status",
-            "refresh_pull_requests",
+            "preview_patch",
+            "show_session",
+            "render_changes",
+            "show_review",
+            "render_review",
+            "list_worktrees",
+            "list_pull_requests",
+            "show_pull_requests",
+            "render_pull_requests",
+            "list_notes",
+            "list_edit_plans",
+            "show_edit_plans",
+            "render_edit_plans",
         ]);
+    }
+
+    if review_tools_enabled(config) {
+        tools.push("create_edit_plan");
+        if config.tool_mode != ToolMode::Minimal {
+            tools.push("create_note");
+            tools.push("update_edit_plan_status");
+        }
+    }
+
+    if workspace_write_enabled(config) {
+        tools.extend(["write", "edit", "apply_patch", "move_path"]);
+        if config.tool_mode != ToolMode::Minimal {
+            tools.push("open_worktree");
+            if config.tool_mode == ToolMode::Full {
+                tools.extend([
+                    "publish_branch",
+                    "create_pull_request",
+                    "refresh_pull_request_status",
+                    "refresh_pull_requests",
+                ]);
+            }
+        }
+    }
+    if shell_enabled(config) {
+        tools.push("shell");
     }
     tools
 }
@@ -7507,6 +7679,9 @@ mod tests {
             allowed_roots: vec![root],
             skill_roots: vec![],
             trust_level: TrustLevel::Readonly,
+            tool_mode: ToolMode::Full,
+            write_mode: WriteMode::Workspace,
+            shell_mode: ShellMode::Full,
             host: "127.0.0.1".to_string(),
             port: 0,
             owner_token: Some("secret".to_string()),
@@ -7521,6 +7696,9 @@ mod tests {
             config_path,
             roots: vec![],
             trust_level: TrustLevel::Readonly,
+            tool_mode: ToolMode::Full,
+            write_mode: WriteMode::Workspace,
+            shell_mode: ShellMode::Full,
             host: "127.0.0.1".to_string(),
             port: 8765,
             owner_token: None,
@@ -7531,6 +7709,23 @@ mod tests {
             auto_skill_roots: true,
             no_interactive: false,
             force: false,
+        }
+    }
+
+    fn config_for_tools(trust_level: TrustLevel) -> Config {
+        Config {
+            allowed_roots: vec![temp_project()],
+            skill_roots: vec![],
+            auto_skill_roots: false,
+            trust_level,
+            tool_mode: ToolMode::Full,
+            write_mode: WriteMode::Workspace,
+            shell_mode: ShellMode::Full,
+            host: "127.0.0.1".to_string(),
+            port: 0,
+            owner_token: Some("secret".to_string()),
+            public_base_url: None,
+            state_dir: None,
         }
     }
 
@@ -7794,7 +7989,8 @@ mod tests {
 
     #[test]
     fn tool_definitions_are_readonly_annotated() {
-        let tools = tool_definitions(TrustLevel::Readonly);
+        let config = config_for_tools(TrustLevel::Readonly);
+        let tools = tool_definitions(&config);
         assert_eq!(tools.len(), 21);
         for tool in tools {
             assert_eq!(tool["annotations"]["readOnlyHint"], true);
@@ -7803,12 +7999,12 @@ mod tests {
             assert_eq!(tool["inputSchema"]["type"], "object");
             assert_eq!(tool["outputSchema"]["type"], "object");
         }
-        let render = tool_definitions(TrustLevel::Readonly)
+        let render = tool_definitions(&config)
             .into_iter()
             .find(|tool| tool["name"] == "render_changes")
             .unwrap();
         assert_eq!(render["_meta"]["openai/outputTemplate"], CHANGES_WIDGET_URI);
-        let render_review = tool_definitions(TrustLevel::Readonly)
+        let render_review = tool_definitions(&config)
             .into_iter()
             .find(|tool| tool["name"] == "render_review")
             .unwrap();
@@ -7816,7 +8012,7 @@ mod tests {
             render_review["_meta"]["openai/outputTemplate"],
             REVIEW_WIDGET_URI
         );
-        let render_pull_requests = tool_definitions(TrustLevel::Readonly)
+        let render_pull_requests = tool_definitions(&config)
             .into_iter()
             .find(|tool| tool["name"] == "render_pull_requests")
             .unwrap();
@@ -7824,7 +8020,7 @@ mod tests {
             render_pull_requests["_meta"]["openai/outputTemplate"],
             PULL_REQUESTS_WIDGET_URI
         );
-        let render_edit_plans = tool_definitions(TrustLevel::Readonly)
+        let render_edit_plans = tool_definitions(&config)
             .into_iter()
             .find(|tool| tool["name"] == "render_edit_plans")
             .unwrap();
@@ -7832,7 +8028,7 @@ mod tests {
             render_edit_plans["_meta"]["openai/outputTemplate"],
             EDIT_PLANS_WIDGET_URI
         );
-        let preview = tool_definitions(TrustLevel::Readonly)
+        let preview = tool_definitions(&config)
             .into_iter()
             .find(|tool| tool["name"] == "preview_patch")
             .unwrap();
@@ -7842,7 +8038,8 @@ mod tests {
 
     #[test]
     fn execute_tool_definitions_include_mutating_tools() {
-        let tools = tool_definitions(TrustLevel::Execute);
+        let config = config_for_tools(TrustLevel::Execute);
+        let tools = tool_definitions(&config);
         let names: HashSet<&str> = tools
             .iter()
             .filter_map(|tool| tool["name"].as_str())
@@ -7920,6 +8117,38 @@ mod tests {
     }
 
     #[test]
+    fn tool_modes_can_reduce_agent_tool_surface() {
+        let mut config = config_for_tools(TrustLevel::Execute);
+        config.tool_mode = ToolMode::Minimal;
+        config.write_mode = WriteMode::Handoff;
+        config.shell_mode = ShellMode::Off;
+        let names: HashSet<String> = tool_definitions(&config)
+            .into_iter()
+            .filter_map(|tool| tool["name"].as_str().map(ToString::to_string))
+            .collect();
+        assert!(names.contains("open_workspace"));
+        assert!(names.contains("read"));
+        assert!(names.contains("create_edit_plan"));
+        assert!(!names.contains("write"));
+        assert!(!names.contains("shell"));
+        assert!(!names.contains("render_changes"));
+        assert!(!names.contains("publish_branch"));
+
+        config.write_mode = WriteMode::Workspace;
+        config.shell_mode = ShellMode::Safe;
+        let names: HashSet<String> = tool_definitions(&config)
+            .into_iter()
+            .filter_map(|tool| tool["name"].as_str().map(ToString::to_string))
+            .collect();
+        assert!(names.contains("write"));
+        assert!(names.contains("edit"));
+        assert!(names.contains("apply_patch"));
+        assert!(names.contains("move_path"));
+        assert!(names.contains("shell"));
+        assert!(!names.contains("open_worktree"));
+    }
+
+    #[test]
     fn execute_tools_require_oauth_execute_scopes() {
         for tool in [
             "write",
@@ -7951,7 +8180,8 @@ mod tests {
 
     #[test]
     fn review_tool_definitions_include_create_note_without_execute_tools() {
-        let tools = tool_definitions(TrustLevel::Review);
+        let config = config_for_tools(TrustLevel::Review);
+        let tools = tool_definitions(&config);
         let names: HashSet<&str> = tools
             .iter()
             .filter_map(|tool| tool["name"].as_str())
@@ -8412,7 +8642,7 @@ mod tests {
             oauth: None,
             persisted_state: None,
         };
-        let tools = tool_definitions(TrustLevel::Readonly);
+        let tools = tool_definitions(&config_for_tools(TrustLevel::Readonly));
         let tool_names: HashSet<&str> = tools
             .iter()
             .filter_map(|tool| tool["name"].as_str())
@@ -9055,6 +9285,45 @@ mod tests {
         )
         .unwrap_err();
         assert!(escaped.to_string().contains(".."));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn safe_shell_mode_allows_common_checks_and_blocks_risky_commands() {
+        let root = temp_project();
+        fs::write(root.join("README.md"), "# Test\n").unwrap();
+        let mut raw = raw_config(root.clone());
+        raw.trust_level = TrustLevel::Execute;
+        raw.shell_mode = ShellMode::Safe;
+        let config = validate_raw(raw).unwrap();
+        let state = AppState {
+            config: Arc::new(config),
+            registry: Arc::new(Mutex::new(WorkspaceRegistry::default())),
+            initialized_sessions: Arc::new(Mutex::new(InitializedSessions::default())),
+            oauth: None,
+            persisted_state: None,
+        };
+        let opened = open_workspace(&state, root.to_str().unwrap()).unwrap();
+        let workspace_id = opened["workspace_id"].as_str().unwrap();
+        let ok = shell_tool(
+            &state,
+            &serde_json::Map::from_iter([
+                ("workspace_id".to_string(), json!(workspace_id)),
+                ("command".to_string(), json!("git status --short")),
+            ]),
+        )
+        .unwrap();
+        assert_eq!(ok["timed_out"], false);
+        let blocked = shell_tool(
+            &state,
+            &serde_json::Map::from_iter([
+                ("workspace_id".to_string(), json!(workspace_id)),
+                ("command".to_string(), json!("rm -rf target")),
+            ]),
+        )
+        .unwrap_err()
+        .to_string();
+        assert!(blocked.contains("shell_mode=safe"));
         fs::remove_dir_all(root).unwrap();
     }
 

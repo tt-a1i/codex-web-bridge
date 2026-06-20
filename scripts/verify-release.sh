@@ -83,6 +83,8 @@ tar -tzf "$package_tar" | grep -q '/scripts/install-release.sh$'
 tar -tzf "$package_tar" | grep -q '/scripts/package-connector.sh$'
 tar -tzf "$package_tar" | grep -q '/docs/devspace-parity-roadmap.md$'
 tar -tzf "$package_tar" | grep -q '/PACKAGE-MANIFEST.json$'
+tar -tzf "$package_tar" | grep -q '/SECURITY.md$'
+tar -tzf "$package_tar" | grep -q '/FAQ_ZH.md$'
 package_listing="$tmp_package/package-listing.txt"
 tar -tzf "$package_tar" > "$package_listing"
 if grep -E '(^|/)(\.git|target|\.codex|\.codex-web-bridge|__pycache__|review-notes\.jsonl|workspace_state\.json|audit\.jsonl|pr-bodies)(/|$)|(^|/)\.env(\..*)?$|\.pem$|\.key$|\.p12$|\.pfx$|(^|/)id_(rsa|dsa|ecdsa|ed25519)$|(^|/)secrets\.[^/]+$|(^|/)credentials\.[^/]+$|\.pyc$|\.local\.json$|connector\.local\.json$|oauth_tokens\.json$|oauth_owner\.local\.json$' "$package_listing"; then

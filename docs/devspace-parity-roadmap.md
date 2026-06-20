@@ -83,6 +83,11 @@ Implemented here:
   for allowed roots, local port, optional public origin, and optional skill
   roots when run interactively without `--root`; scripted agents can continue
   using explicit flags.
+- Agent tool-surface modes: `tool_mode=minimal|standard|full`,
+  `write_mode=off|handoff|workspace`, and `shell_mode=off|safe|full` let
+  first-time users and weaker MCP hosts reduce the visible tool picker, keep
+  source files immutable while preserving review/edit-plan handoffs, or expose
+  only safe check/test/build shell commands under execute trust.
 - Python reference connector: retained only as a verified protocol reference
   while the Rust connector reaches full parity.
 

@@ -4,6 +4,8 @@
 
 它的默认边界很窄：**只做通信，不替人和目标模型做判断**。
 
+新手配置和安全边界可以先看 [FAQ_ZH.md](FAQ_ZH.md) 和 [SECURITY.md](SECURITY.md)。
+
 它负责：
 
 - 从当前 repo、diff、未跟踪文件、指定证据文件和用户问题生成 context packet；
@@ -69,6 +71,7 @@ MCP host 通过 `POST /mcp` 发送 JSON-RPC 2.0 消息。ChatGPT 这类网页端
 约定与安全边界：
 
 - `trust_level` 默认 `readonly`；readonly 已包含 `preview_patch`、`list_notes`、`list_edit_plans`、`show_changes`、`show_review`、`show_pull_requests`、`show_edit_plans` 和 Apps-compatible `render_changes` / `render_review` / `render_pull_requests` / `render_edit_plans` 卡片；`review` 增加 `create_note`、`create_edit_plan` 和 `update_edit_plan_status`，只写 connector 状态，不改 workspace；`execute` 需用户显式升级，开放 scoped `write` / `edit` / `apply_patch` / `move_path`、bounded non-interactive `shell`、managed Git worktrees、`open_workspace(mode="worktree")`、`publish_branch`、`create_pull_request`、`refresh_pull_request_status` 和 `refresh_pull_requests`。
+- `tool_mode` / `write_mode` / `shell_mode` 用来把 execute 上限继续收窄给不同 Agent：`tool_mode=minimal|standard|full` 控制工具选择器大小；`write_mode=off|handoff|workspace` 控制是否允许源码写入、worktree、publish 和 PR 工具，其中 `handoff` 适合只让 ChatGPT 写 review note / edit plan 给本地 Agent 执行；`shell_mode=off|safe|full` 控制 shell 是否出现，`safe` 只允许只读 Git 与常见 test/lint/typecheck/check/build 命令。默认值保持兼容：`tool_mode=full`、`write_mode=workspace`、`shell_mode=full`。
 - `state_dir` 下会保存 `workspace_state.json`、`audit.jsonl`、review notes 和 PR body handoff 文件。前者给 `show_session` / `sessions list/show` / `list_pull_requests` / `list_edit_plans` 用，记录 session、workspace id、edit plan intent 和路径摘要、PR handoff 摘要、工具名、workspace-relative path、move from/to、query、cwd、结果状态和 bounded error；不会保存文件正文、PR body、shell 命令正文、patch 正文或 shell 输出。Review note 正文只写入 `review-notes.jsonl`，可通过 authenticated readonly `list_notes` 按 `workspace_id` 恢复；`show_review` / `render_review`、`list_edit_plans` / `show_edit_plans` / `render_edit_plans`、PR handoff 读取工具都需要 OAuth `workspace:read` 或 owner token。no-auth smoke connector 不能读取 note body、edit plan intent 或 PR handoff records。PR body 只写入 `pr-bodies/`，audit/state 不保存 patch diff 正文。Edit plan intent 是本地 state 的可恢复 handoff 内容，但不会进入 audit 或 Apps `_meta` 摘要。
 - OAuth scope 会逐工具检查：execute 文件、Git、worktree 和 PR 工具需要 `workspace:write`，`shell` 工具需要单独的 `shell` scope；本地/自管 client 使用 owner token 时不受 OAuth scope 限制。
 - 默认绑定 loopback；绑定非 loopback host 必须配置 `owner_token`，owner token 和 OAuth token 都用常量时间比对。
@@ -235,6 +238,12 @@ Rust Connector CLI：
 
 # 显式开启文件写入/编辑/shell 工具；不要用于 no-auth 公网隧道
 ./bin/codex-connector init --root /absolute/path/to/project --trust-level execute --force
+
+# 第一次给 GPT Pro 或能力较弱的 Agent 用：少工具、只写 handoff、不暴露 shell
+./bin/codex-connector init --root /absolute/path/to/project --trust-level execute --tool-mode minimal --write-mode handoff --shell-mode off --force
+
+# 允许源码修改，但 shell 只允许测试、lint、build 和只读 git 命令
+./bin/codex-connector init --root /absolute/path/to/project --trust-level execute --write-mode workspace --shell-mode safe --force
 
 # ChatGPT / GPT Pro 持久 connector：public_base_url 是 tunnel origin，不带 /mcp
 ./bin/codex-connector init --root /absolute/path/to/project --public-base-url https://<tunnel-host> --force

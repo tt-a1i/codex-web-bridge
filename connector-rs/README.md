@@ -45,6 +45,23 @@ or agents to remember the Cargo manifest path.
   init --root /absolute/path/to/project \
   --no-auto-skill-roots --force
 
+# Reduce the tool surface for first-time users or weaker MCP hosts.
+./bin/codex-connector \
+  init --root /absolute/path/to/project \
+  --trust-level execute \
+  --tool-mode minimal \
+  --write-mode handoff \
+  --shell-mode off \
+  --force
+
+# Allow source edits but keep shell to common check/test/build commands.
+./bin/codex-connector \
+  init --root /absolute/path/to/project \
+  --trust-level execute \
+  --write-mode workspace \
+  --shell-mode safe \
+  --force
+
 # Temporary no-auth ChatGPT smoke test only.
 ./bin/codex-connector \
   init --root /absolute/path/to/project --no-owner-token --force
@@ -52,7 +69,7 @@ or agents to remember the Cargo manifest path.
 # Start the MCP server.
 ./bin/codex-connector serve
 
-# Print config, endpoint, auth state, Git availability, and tool surface.
+# Print config, endpoint, auth state, modes, Git availability, and tool surface.
 ./bin/codex-connector doctor
 
 # Show recent local audit events.
@@ -135,6 +152,19 @@ OAuth scope requests default to the supported scopes, and review handoff tools
 that return note bodies or edit plan intent require `workspace:read` unless the
 caller uses the local owner token. Execute file, Git, worktree, and PR tools
 require `workspace:write`; the shell tool requires the separate `shell` scope.
+
+Three optional mode switches make the connector easier to fit to different
+agents:
+
+- `tool_mode`: `minimal` keeps the picker small, `standard` adds handoff and
+  visibility tools, and `full` exposes the complete configured surface. The
+  default is `full` for backward compatibility.
+- `write_mode`: `off` and `handoff` keep source files immutable while still
+  allowing review/edit-plan handoff tools when trust permits them;
+  `workspace` enables source mutation tools under `trust_level=execute`.
+- `shell_mode`: `off` hides shell, `safe` exposes only common check/test/build
+  commands plus read-only Git commands, and `full` preserves the bounded
+  non-interactive Bash tool. Shell still requires `trust_level=execute`.
 
 ## Current Tool Surface
 
@@ -286,13 +316,19 @@ plus:
 - `refresh_pull_request_status`
 - `refresh_pull_requests`
 
+`write_mode=off` or `write_mode=handoff` hides and rejects source mutation,
+managed worktree, publish, and PR creation tools even when `trust_level` is
+`execute`. Use `write_mode=handoff` when ChatGPT should create recoverable edit
+plans and review notes for a local agent or human to apply later.
+
 `open_workspace` accepts `mode: "checkout" | "worktree"`. The default
 `checkout` mode opens the real allowed directory. In execute trust,
-`mode: "worktree"` creates a managed Git worktree from the requested path and
-returns the worktree's workspace id directly; optional `base_ref`, `branch`,
-`task_id`, and `task` arguments mirror `open_worktree`. This keeps the common
-agent flow on one entrypoint while the explicit `open_worktree` tool remains
-available for hosts that prefer a separate create-worktree step.
+`mode: "worktree"` also requires `write_mode=workspace`; it creates a managed
+Git worktree from the requested path and returns the worktree's workspace id
+directly. Optional `base_ref`, `branch`, `task_id`, and `task` arguments mirror
+`open_worktree`. This keeps the common agent flow on one entrypoint while the
+explicit `open_worktree` tool remains available for hosts that prefer a
+separate create-worktree step.
 
 `apply_patch` accepts bounded unified diffs for existing, added, and deleted
 UTF-8 files under the workspace. Added files must target an existing
@@ -306,7 +342,11 @@ files within the workspace, rejects symlinks and directories, and requires
 
 The `shell` tool is non-interactive, runs under `/bin/bash -lc` in a
 workspace-contained cwd, uses a scrubbed environment, and has timeout/output
-bounds. `open_worktree` creates managed Git worktrees under connector state and
+bounds. With `shell_mode=safe`, it rejects multi-line commands, shell
+metacharacters, absolute paths, parent traversal, sensitive/generated paths,
+and commands outside the allowlist of read-only Git status/diff/log plus common
+test, lint, typecheck, check, and build commands. `open_worktree` creates
+managed Git worktrees under connector state and
 returns a new workspace id for isolated coding sessions; optional `task_id` and
 `task` metadata are stored under connector state, not inside the worktree.
 `publish_branch` pushes the current workspace branch to a Git remote with

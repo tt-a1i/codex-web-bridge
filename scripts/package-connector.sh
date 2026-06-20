@@ -83,7 +83,7 @@ cargo build --release --manifest-path "$MANIFEST"
 
 mkdir -p "$stage/bin" "$stage/connector-rs" "$stage/scripts" "$stage/docs" "$stage/skills"
 install -m 0755 "$REPO_ROOT/connector-rs/target/release/codex-connector" "$stage/bin/codex-connector"
-cp "$REPO_ROOT/README.md" "$REPO_ROOT/LICENSE" "$REPO_ROOT/CHANGELOG.md" "$REPO_ROOT/CONTRIBUTING.md" "$stage/"
+cp "$REPO_ROOT/README.md" "$REPO_ROOT/LICENSE" "$REPO_ROOT/CHANGELOG.md" "$REPO_ROOT/CONTRIBUTING.md" "$REPO_ROOT/SECURITY.md" "$REPO_ROOT/FAQ_ZH.md" "$stage/"
 cp "$REPO_ROOT/connector-rs/Cargo.toml" "$REPO_ROOT/connector-rs/Cargo.lock" "$REPO_ROOT/connector-rs/README.md" "$REPO_ROOT/connector-rs/connector.example.json" "$stage/connector-rs/"
 cp -R "$REPO_ROOT/connector-rs/src" "$stage/connector-rs/src"
 cp -R "$REPO_ROOT/connector" "$stage/connector"
